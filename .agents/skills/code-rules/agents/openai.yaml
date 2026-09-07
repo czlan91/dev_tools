@@ -1,0 +1,4 @@
+interface:
+  display_name: "代码规则"
+  short_description: "为项目代码添加教学注释并维护完整的 README 命令"
+  default_prompt: "遵循本项目的代码学习规范完成代码修改，并同步维护 README。"

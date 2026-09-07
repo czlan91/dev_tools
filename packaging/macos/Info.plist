@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Finder、Dock 和活动监视器中显示的应用名称。 -->
+    <key>CFBundleDisplayName</key>
+    <string>Dev Tools</string>
+    <key>CFBundleName</key>
+    <string>Dev Tools</string>
+
+    <!-- macOS 使用 Bundle Identifier 区分不同应用。 -->
+    <key>CFBundleIdentifier</key>
+    <string>com.devtools.desktop</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <!-- 必须与 Contents/MacOS 下复制进去的二进制文件名一致。 -->
+    <key>CFBundleExecutable</key>
+    <string>dev_tools</string>
+
+    <!-- 不写扩展名时，macOS 会在 Resources 中查找 AppIcon.icns。 -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
