@@ -4,50 +4,72 @@ use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Textarea, TextareaState},
+    input::{Input, InputState, Textarea, TextareaState},
     label::Label,
     v_flex,
 };
 
 /// TSV → SQL 取值列表 工具页。
 ///
-/// 支持固定前缀、外层括号开关和自动去重。
+/// 支持固定前缀、外层括号开关、列选择和自动去重。
 pub struct TsvTool {
     input_state: Entity<TextareaState>,
     output: String,
     /// 是否启用固定前缀。
     enable_prefix: bool,
-    /// 固定前缀文本（默认 "IN "）。
-    prefix: String,
+    /// 固定前缀文本输入状态。
+    prefix_state: Entity<InputState>,
     /// 是否添加外层括号。
     enable_parens: bool,
+    /// 要转换的列索引（从 0 开始）。
+    column_state: Entity<InputState>,
 }
 
 impl TsvTool {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input_state = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("在此粘贴 TSV 数据（制表符分隔，自动取第一列）…")
+                .placeholder("在此粘贴 TSV 数据（制表符分隔）…")
+        });
+        let prefix_state = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value("IN ")
+                .placeholder("固定前缀…")
+        });
+        let column_state = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value("1")
+                .placeholder("列号")
         });
         Self {
             input_state,
             output: String::from("-- 点击「转换」生成取值列表"),
             enable_prefix: false,
-            prefix: String::from("IN "),
+            prefix_state,
             enable_parens: false,
+            column_state,
         }
     }
 
     /// 纯函数：转换 TSV 为 SQL 取值列表。
     ///
-    /// `dedup` 控制是否去重；`prefix` 为 Some 时在前面添加固定文本；
-    /// `parens` 控制是否用括号包裹。
-    fn convert(raw: &str, dedup: bool, prefix: Option<&str>, parens: bool) -> String {
+    /// `column_index` 指定要提取的列（从 0 开始）；`dedup` 控制是否去重；
+    /// `prefix` 为 Some 时在前面添加固定文本；`parens` 控制是否用括号包裹。
+    fn convert(raw: &str, column_index: usize, dedup: bool, prefix: Option<&str>, parens: bool) -> String {
         let mut values: Vec<String> = raw
             .lines()
-            .map(|line| line.split(['\t', '|']).next().unwrap_or("").trim())
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split(['\t', '|']).collect();
+                parts.get(column_index).map(|s| s.trim())
+            })
             .filter(|s| !s.is_empty())
-            .map(|s| format!("'{}'", s.replace('\'', "''")))
+            .map(|s| {
+                if s.to_uppercase() == "NULL" {
+                    "NULL".to_string()
+                } else {
+                    format!("'{}'", s.replace('\'', "''"))
+                }
+            })
             .collect();
 
         if values.is_empty() {
@@ -69,7 +91,8 @@ impl TsvTool {
             result = format!("{}{}", p, result);
         }
 
-        log::debug!(target: "tool.tsv", "TSV 转换：解析到 {} 个值（去重后 {} 个）", raw.lines().count(), values.len());
+        let line_count = raw.lines().count();
+        log::debug!(target: "tool.tsv", "TSV 转换：解析到 {} 行（列 {}，去重后 {} 个值）", line_count, column_index + 1, values.len());
         result
     }
 }
@@ -78,6 +101,8 @@ impl Render for TsvTool {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tool = cx.entity();
         let input_state = self.input_state.clone();
+        let prefix_state = self.prefix_state.clone();
+        let column_state = self.column_state.clone();
 
         let theme = cx.theme();
 
@@ -88,13 +113,21 @@ impl Render for TsvTool {
             .on_click({
                 let tool = tool.clone();
                 let input = input_state.clone();
+                let prefix_input = prefix_state.clone();
+                let column_input = column_state.clone();
                 let enable_prefix = self.enable_prefix;
-                let prefix = self.prefix.clone();
                 let enable_parens = self.enable_parens;
                 move |_, _window, cx| {
                     let raw = input.read(cx).value().to_string();
-                    let prefix = if enable_prefix { Some(prefix.as_str()) } else { None };
-                    let out = Self::convert(&raw, true, prefix, enable_parens);
+                    let prefix = if enable_prefix {
+                        let p = prefix_input.read(cx).value().to_string();
+                        if p.is_empty() { None } else { Some(p) }
+                    } else {
+                        None
+                    };
+                    let col_str = column_input.read(cx).value().to_string();
+                    let column_index = col_str.parse::<usize>().unwrap_or(1).saturating_sub(1);
+                    let out = Self::convert(&raw, column_index, true, prefix.as_deref(), enable_parens);
                     log::info!(target: "tool.tsv", "TSV 转换完成，结果 {} 字符", out.len());
                     tool.update(cx, |t, cx| {
                         t.output = out;
@@ -199,7 +232,7 @@ impl Render for TsvTool {
                     .gap_0p5()
                     .child(Label::new("TSV → SQL IN").text_lg().font_semibold())
                     .child(
-                        Label::new("粘贴 TSV 数据，取第一列生成逗号分隔的带引号值")
+                        Label::new("粘贴 TSV 数据，选择列生成逗号分隔的带引号值")
                             .text_sm()
                             .text_color(theme.muted_foreground),
                     ),
@@ -226,7 +259,25 @@ impl Render for TsvTool {
                     .items_center()
                     .gap_2()
                     .child(toggle_prefix)
+                    .when(self.enable_prefix, |this| {
+                        this.child(
+                            div()
+                                .w(px(160.))
+                                .child(Input::new(&self.prefix_state)),
+                        )
+                    })
                     .child(toggle_parens)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(Label::new("列").text_sm().text_color(theme.muted_foreground))
+                            .child(
+                                div()
+                                    .w(px(60.))
+                                    .child(Input::new(&self.column_state)),
+                            ),
+                    )
                     .child(convert_btn)
                     .child(copy_btn),
             )

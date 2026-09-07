@@ -29,7 +29,15 @@ impl JsonFormatterTool {
 
     /// 解析 JSON5（JSON 的超集），统一返回 `serde_json::Value`。
     fn parse5(text: &str) -> Result<serde_json::Value, String> {
-        json5::from_str(text).map_err(|e| e.to_string())
+        json5::from_str(text).map_err(|e| {
+            let msg = e.to_string();
+            // 尝试提取位置信息
+            if let Some(pos) = e.position() {
+                format!("第 {} 行第 {} 列：{}", pos.line + 1, pos.column + 1, msg)
+            } else {
+                msg
+            }
+        })
     }
 
     /// 纯函数：格式化为标准 JSON（2 空格缩进）。
