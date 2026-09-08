@@ -173,6 +173,28 @@ fn block(value: &Value, depth: usize, key: &str, comma: bool) -> Vec<String> {
         .collect()
 }
 
+/// 对齐任务：显式栈中的一个工作单元。
+///
+/// 将递归调用栈搬到堆上，避免深层嵌套 JSON 导致的栈溢出。
+/// Rust 不保证尾调用优化（TCO），且 `align` 是树形递归（先序遍历 + 收尾工作），
+/// 结构上无法改写为尾递归，因此使用显式栈 + 迭代。
+enum AlignTask<'a> {
+    /// 对齐一对 JSON 值（对应原递归函数的入口）。
+    Visit {
+        left: Option<&'a Value>,
+        right: Option<&'a Value>,
+        depth: usize,
+        key: String,
+        commas: (bool, bool),
+    },
+    /// 输出容器闭合行（`}` 或 `]`），对应原递归函数的收尾工作。
+    Close {
+        depth: usize,
+        bracket: char,
+        commas: (bool, bool),
+    },
+}
+
 /// 递归对齐两个 JSON 值，生成差异行列表。
 ///
 /// ### 对齐策略
@@ -188,6 +210,12 @@ fn block(value: &Value, depth: usize, key: &str, comma: bool) -> Vec<String> {
 ///
 /// 两侧的尾逗号独立计算，确保每侧生成的文本都是合法的 JSON。
 /// 例如左侧有 `a,b` 右侧只有 `a`，左侧的 `b` 行需要逗号，右侧不需要。
+///
+/// ### 为什么用显式栈而不是尾递归
+///
+/// Rust 不保证尾调用优化，且本函数在 `for` 循环中多次递归、递归后还要输出
+/// 闭合括号（非尾位置），无法改写为尾递归。显式栈将调用帧搬到堆上，
+/// 栈深度只受内存限制，不受调用栈大小限制。
 fn align(
     left: Option<&Value>,
     right: Option<&Value>,
@@ -196,95 +224,130 @@ fn align(
     commas: (bool, bool),
     rows: &mut Vec<DiffRow>,
 ) {
-    match (left, right) {
-        // —— 对象（Object）对齐 ——
-        // 只有当两侧都是对象且至少一侧非空时才进入对象对齐
-        (Some(Value::Object(a)), Some(Value::Object(b))) if !a.is_empty() || !b.is_empty() => {
-            // 输出左花括号
-            rows.push(DiffRow {
-                left: line(depth, key, "{", false),
-                right: line(depth, key, "{", false),
-                kind: ChangeKind::Equal,
-            });
+    let mut stack = vec![AlignTask::Visit {
+        left,
+        right,
+        depth,
+        key: key.to_owned(),
+        commas,
+    }];
 
-            // 收集两侧所有 Key 的并集，用 BTreeSet 自动排序
-            let keys: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
-            for key in keys {
-                // Key 的文本表示（带引号）：如 `"name": `
-                let label = format!("{}: ", serde_json::to_string(key).expect("Key 可序列化"));
-                align(
-                    a.get(key),
-                    b.get(key),
-                    depth + 1,
-                    &label,
-                    (
-                        // 该 Key 在左侧不是最后一个时需要逗号
-                        a.keys().next_back() != Some(key),
-                        // 该 Key 在右侧不是最后一个时需要逗号
-                        b.keys().next_back() != Some(key),
-                    ),
-                    rows,
-                );
-            }
+    // 栈是 LIFO：后入栈的任务先执行，与递归的「深入子节点再收尾」顺序一致
+    while let Some(task) = stack.pop() {
+        match task {
+            AlignTask::Visit {
+                left,
+                right,
+                depth,
+                key,
+                commas,
+            } => match (left, right) {
+                // —— 对象（Object）对齐 ——
+                (Some(Value::Object(a)), Some(Value::Object(b)))
+                    if !a.is_empty() || !b.is_empty() =>
+                {
+                    // 输出左花括号
+                    rows.push(DiffRow {
+                        left: line(depth, &key, "{", false),
+                        right: line(depth, &key, "{", false),
+                        kind: ChangeKind::Equal,
+                    });
 
-            // 输出右花括号
-            rows.push(DiffRow {
-                left: line(depth, "", "}", commas.0),
-                right: line(depth, "", "}", commas.1),
-                kind: ChangeKind::Equal,
-            });
-        }
+                    // 闭合任务先入栈（后执行），子任务逆序入栈（正序执行）
+                    stack.push(AlignTask::Close {
+                        depth,
+                        bracket: '}',
+                        commas,
+                    });
 
-        // —— 数组（Array）对齐 ——
-        (Some(Value::Array(a)), Some(Value::Array(b))) if !a.is_empty() || !b.is_empty() => {
-            rows.push(DiffRow {
-                left: line(depth, key, "[", false),
-                right: line(depth, key, "[", false),
-                kind: ChangeKind::Equal,
-            });
+                    // 收集两侧所有 Key 的并集，用 BTreeSet 自动排序
+                    let keys: std::collections::BTreeSet<_> =
+                        a.keys().chain(b.keys()).collect();
+                    // 逆序入栈，弹出时即为正序
+                    for key in keys.into_iter().rev() {
+                        let label =
+                            format!("{}: ", serde_json::to_string(key).expect("Key 可序列化"));
+                        stack.push(AlignTask::Visit {
+                            left: a.get(key),
+                            right: b.get(key),
+                            depth: depth + 1,
+                            key: label,
+                            commas: (
+                                // 该 Key 在左侧不是最后一个时需要逗号
+                                a.keys().next_back() != Some(key),
+                                // 该 Key 在右侧不是最后一个时需要逗号
+                                b.keys().next_back() != Some(key),
+                            ),
+                        });
+                    }
+                }
 
-            // 按索引对齐，较长数组多出的部分视为新增/删除
-            for ix in 0..a.len().max(b.len()) {
-                align(
-                    a.get(ix),
-                    b.get(ix),
-                    depth + 1,
-                    "",
-                    (ix + 1 < a.len(), ix + 1 < b.len()),
-                    rows,
-                );
-            }
+                // —— 数组（Array）对齐 ——
+                (Some(Value::Array(a)), Some(Value::Array(b)))
+                    if !a.is_empty() || !b.is_empty() =>
+                {
+                    rows.push(DiffRow {
+                        left: line(depth, &key, "[", false),
+                        right: line(depth, &key, "[", false),
+                        kind: ChangeKind::Equal,
+                    });
 
-            rows.push(DiffRow {
-                left: line(depth, "", "]", commas.0),
-                right: line(depth, "", "]", commas.1),
-                kind: ChangeKind::Equal,
-            });
-        }
+                    stack.push(AlignTask::Close {
+                        depth,
+                        bracket: ']',
+                        commas,
+                    });
 
-        // —— 叶子值（非容器，或空容器）对齐 ——
-        _ => {
-            // 确定变化类型
-            let kind = match (left, right) {
-                (None, _) => ChangeKind::Added,                          // 左侧无 → 新增
-                (_, None) => ChangeKind::Removed,                        // 右侧无 → 删除
-                (Some(a), Some(b)) if a == b => ChangeKind::Equal,       // 相等 → 不变
-                _ => ChangeKind::Modified,                               // 不等 → 修改
-            };
+                    // 按索引对齐，较长数组多出的部分视为新增/删除；逆序入栈
+                    for ix in (0..a.len().max(b.len())).rev() {
+                        stack.push(AlignTask::Visit {
+                            left: a.get(ix),
+                            right: b.get(ix),
+                            depth: depth + 1,
+                            key: String::new(),
+                            commas: (ix + 1 < a.len(), ix + 1 < b.len()),
+                        });
+                    }
+                }
 
-            let a = left
-                .map(|v| block(v, depth, key, commas.0))
-                .unwrap_or_default();
-            let b = right
-                .map(|v| block(v, depth, key, commas.1))
-                .unwrap_or_default();
+                // —— 叶子值（非容器，或空容器）对齐 ——
+                _ => {
+                    let kind = match (left, right) {
+                        (None, _) => ChangeKind::Added,                    // 左侧无 → 新增
+                        (_, None) => ChangeKind::Removed,                  // 右侧无 → 删除
+                        (Some(a), Some(b)) if a == b => ChangeKind::Equal, // 相等 → 不变
+                        _ => ChangeKind::Modified,                         // 不等 → 修改
+                    };
 
-            // 两侧行数可能不同（如 `"a": 1` 一行 vs 多行对象），对齐到最大行数
-            for ix in 0..a.len().max(b.len()) {
+                    let a = left
+                        .map(|v| block(v, depth, &key, commas.0))
+                        .unwrap_or_default();
+                    let b = right
+                        .map(|v| block(v, depth, &key, commas.1))
+                        .unwrap_or_default();
+
+                    // 两侧行数可能不同（如 `"a": 1` 一行 vs 多行对象），对齐到最大行数
+                    for ix in 0..a.len().max(b.len()) {
+                        rows.push(DiffRow {
+                            left: a.get(ix).cloned().unwrap_or_default(),
+                            right: b.get(ix).cloned().unwrap_or_default(),
+                            kind,
+                        });
+                    }
+                }
+            },
+
+            // —— 容器收尾：输出闭合行 ——
+            AlignTask::Close {
+                depth,
+                bracket,
+                commas,
+            } => {
+                let text = bracket.to_string();
                 rows.push(DiffRow {
-                    left: a.get(ix).cloned().unwrap_or_default(),
-                    right: b.get(ix).cloned().unwrap_or_default(),
-                    kind,
+                    left: line(depth, "", &text, commas.0),
+                    right: line(depth, "", &text, commas.1),
+                    kind: ChangeKind::Equal,
                 });
             }
         }
@@ -367,6 +430,36 @@ mod tests {
             for side in [true, false] {
                 assert!(serde_json::from_str::<Value>(&result.text(side)).is_ok());
             }
+        }
+    }
+
+    /// 测试：深层嵌套 JSON 不会栈溢出，且迭代版结果与预期一致。
+    ///
+    /// 迭代版使用显式栈（堆分配），不受调用栈深度限制。
+    /// 注意：serde_json 默认解析深度限制为 128 层，这里测试 100 层嵌套。
+    #[test]
+    fn deep_nesting_does_not_stack_overflow() {
+        // 构造 100 层嵌套对象：{"a":{"a":{"a":...}}}
+        let depth = 100;
+        let mut left = String::from("1");
+        let mut right = String::from("2");
+        for _ in 0..depth {
+            left = format!(r#"{{"a":{left}}}"#);
+            right = format!(r#"{{"a":{right}}}"#);
+        }
+
+        let result = compare(&left, &right);
+
+        // 最内层的值不同 → 应该有 Modified 行
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|row| row.kind == ChangeKind::Modified)
+        );
+        // 两侧文本都必须是合法的 JSON
+        for side in [true, false] {
+            assert!(serde_json::from_str::<Value>(&result.text(side)).is_ok());
         }
     }
 }
