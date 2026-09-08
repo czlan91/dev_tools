@@ -48,9 +48,9 @@ pub enum ToolId {
 //
 // 这些模块是工具的内部实现，不对外暴露：
 // - `json_diff`：JSON 比较引擎，负责按 Key 对齐和差异标记。
-// - `json_support`：JSON 解析、排序、转义等公共工具函数。
+// - `json_utils`：JSON 解析、排序、转义等公共工具函数。
 
 /// JSON 比较引擎：按对象 Key 和数组下标对齐，标记差异。
 mod json_diff;
 /// JSON 公共工具函数：解析（含 JSON5）、Key 排序、转义/取消转义。
-mod json_support;
+mod json_utils;

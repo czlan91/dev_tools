@@ -74,8 +74,8 @@ impl Comparison {
         let raw_right = serde_json::to_string_pretty(&right).expect("JSON Value 可序列化");
 
         // 对两侧进行 Key 排序，然后递归对齐
-        let left = super::json_support::sort_keys(left);
-        let right = super::json_support::sort_keys(right);
+        let left = super::json_utils::sort_keys(left);
+        let right = super::json_utils::sort_keys(right);
         let mut rows = Vec::new();
         // 初始调用：深度 0，无 Key，两侧都不需要尾逗号
         align(Some(&left), Some(&right), 0, "", (false, false), &mut rows);

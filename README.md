@@ -169,7 +169,7 @@ src/
     ├── json_formatter.rs    # JSON/JSON5 格式化工具
     ├── json_compare.rs      # JSON 比较工具
     ├── json_diff.rs         # JSON 比较引擎（私有模块）
-    └── json_support.rs      # JSON 公共工具函数（私有模块）
+    └── json_utils.rs         # JSON 公共工具函数（私有模块）
 ```
 
 ## 打包
