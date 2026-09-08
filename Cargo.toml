@@ -2,9 +2,9 @@
 name = "dev_tools"
 version = "0.1.0"
 edition = "2024"
-# Edition 2024 从 Rust 1.85 起稳定；显式声明最低版本，
+# Edition 2024 从 Rust 1.90 起稳定；显式声明最低版本，
 # 可以让 Cargo 在工具链过旧时直接给出清晰错误。
-rust-version = "1.85"
+rust-version = "1.90"
 description = "A small desktop toolbox (GPUI): TSV -> SQL IN, image -> base64, and more."
 
 [dependencies]

@@ -6,7 +6,7 @@
 
 ## 环境准备
 
-本项目当前面向 macOS 开发，使用 Rust Edition 2024，最低支持 Rust 1.85。开始前需要安装 Rust 工具链和 Apple Command Line Tools。
+本项目当前面向 macOS 开发，使用 Rust Edition 2024，最低支持 Rust 1.90。开始前需要安装 Rust 工具链和 Apple Command Line Tools。
 
 ```bash
 # 安装 Apple Command Line Tools（已安装时无需重复执行）
@@ -20,7 +20,7 @@ rustc --version
 cargo --version
 ```
 
-如果本机 Rust 低于 1.85，请升级稳定版工具链：
+如果本机 Rust 低于 1.90，请升级稳定版工具链：
 
 ```bash
 rustup update stable
