@@ -2,14 +2,17 @@
 name = "dev_tools"
 version = "0.1.0"
 edition = "2024"
-# Edition 2024 从 Rust 1.90 起稳定；显式声明最低版本，
+# 项目以 Rust 1.90 为最低工具链；显式声明最低版本，
 # 可以让 Cargo 在工具链过旧时直接给出清晰错误。
 rust-version = "1.90"
 description = "A small desktop toolbox (GPUI): TSV -> SQL IN, image -> base64, and more."
 
 [dependencies]
-gpui-kit = "0.6.0"
+gpui-kit = { version = "0.6.0", features = ["tree-sitter"] }
 base64 = "0.22"
+# anyhow 仅在 `main.rs` 的 `AssetSource` trait 实现中使用。
+# 该 trait 的 `load` 方法签名由 gpui 框架定义，返回 `anyhow::Result`，我们无法改变。
+# 项目内部统一使用 `thiserror`（见 `src/error.rs`），仅在 trait 边界处转换为 `anyhow`。
 anyhow = "1"
 thiserror = "2"
 # 日志：`log` 是门面（facade）接口，`env_logger` 是具体的输出实现（写入 stderr，
@@ -18,9 +21,8 @@ log = "0.4"
 env_logger = "0.11"
 # JSON 工具：
 serde = { version = "1", features = ["derive"] }  # 主题/设置文件与 JSON 的序列化
-serde_json = "1"  # 标准 JSON 解析/格式化/排序后的重建
+serde_json = { version = "1", features = ["preserve_order"] }  # 标准 JSON 解析/格式化/排序后的重建
 json5 = "1"  # JSON5（JSON 超集：允许注释、尾逗号、单引号等）解析
-similar = "2"  # 行级 diff 算法，用于 git 风格的 JSON 比较
 
 [profile.release]
 strip = true

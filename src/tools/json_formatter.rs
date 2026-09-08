@@ -1,87 +1,114 @@
+//! ## JSON 格式化工具
+//!
+//! 本工具提供 JSON 文件的多种处理功能：
+//!
+//! - **JSON 格式化**：将压缩的 JSON 展开为带缩进的易读格式。
+//! - **JSON5 格式化**：解析 JSON5 格式（支持注释、尾逗号、单引号等）并输出为标准 JSON。
+//! - **Key 排序**：递归排序对象中的所有 Key，使输出结果稳定可预测。
+//! - **压缩**：移除所有空白字符，输出单行紧凑 JSON。
+//! - **转义/取消转义**：将字符串转为 JSON 字符串字面量，或从 JSON 字符串字面量恢复。
+//!
+//! 该工具同时支持「JSON 格式化」和「JSON5 格式化」两种模式，
+//! 通过 `json5_mode` 字段区分。两种模式使用相同的编辑器控件，
+//! 但切换时不会丢失各自的输入内容（因为各持有独立的实体实例）。
+
+use gpui_kit::component::{
+    ActiveTheme, Disableable, Sizable, StyledExt,
+    alert::Alert,
+    button::Button,
+    h_flex,
+    input::{Editor, EditorState},
+    label::Label,
+    v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-    input::{Textarea, TextareaState},
-    label::Label,
-    h_flex, v_flex,
-};
 
-/// JSON 格式化工具页：格式化 / JSON5 格式化 / key 排序 / 自动转义 / 压缩。
+/// JSON 格式化工具实体。
+///
+/// 持有输入编辑器和输出文本，通过按钮操作触发各种处理功能。
+/// `json5_mode` 标记当前实例是 JSON 还是 JSON5 模式。
 pub struct JsonFormatterTool {
-    input_state: Entity<TextareaState>,
+    /// 输入编辑器状态（支持语法高亮）。
+    input_state: Entity<EditorState>,
+    /// 是否为 JSON5 模式（影响按钮标签和解析器选择）。
+    json5_mode: bool,
+    /// 处理后的输出文本。
     output: String,
+    /// 错误信息（`None` 表示无错误）。
     error: Option<String>,
 }
 
 impl JsonFormatterTool {
+    /// 创建 JSON 格式化工具实例（标准 JSON 模式）。
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            json5_mode: false,
             input_state: cx.new(|cx| {
-                TextareaState::new(window, cx)
+                EditorState::new(window, cx)
+                    .language("json")       // 启用 JSON 语法高亮
                     .placeholder("在此粘贴 JSON / JSON5 文本…")
             }),
-            output: String::from("-- 点击按钮生成结果"),
+            output: String::new(),
             error: None,
         }
     }
 
-    /// 解析 JSON5（JSON 的超集），统一返回 `serde_json::Value`。
-    fn parse5(text: &str) -> Result<serde_json::Value, String> {
-        json5::from_str(text).map_err(|e| {
-            let msg = e.to_string();
-            // 尝试提取位置信息
-            if let Some(pos) = e.position() {
-                format!("第 {} 行第 {} 列：{}", pos.line + 1, pos.column + 1, msg)
-            } else {
-                msg
-            }
-        })
+    /// 创建独立 JSON5 格式化工具实例。
+    ///
+    /// 复用 `JsonFormatterTool` 的处理逻辑，但标记为 JSON5 模式。
+    /// 持有自己的输入编辑器，切换工具时不会丢失输入内容。
+    pub fn new_json5(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut tool = Self::new(window, cx);
+        tool.json5_mode = true;
+        tool
     }
 
-    /// 纯函数：格式化为标准 JSON（2 空格缩进）。
-    fn format_json(text: &str) -> Result<String, String> {
-        let value = Self::parse5(text)?;
-        serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
+    // —— 以下为静态工具方法，不依赖实例状态 ——
+
+    /// 解析 JSON5 文本为 `serde_json::Value`。
+    fn parse5(text: &str) -> Result<serde_json::Value, super::json_support::JsonError> {
+        super::json_support::parse(text, true)
     }
 
-    /// 递归排序对象 key（字典序）后输出标准 JSON。
+    /// 格式化 JSON 文本（带缩进）。
+    fn format_json(text: &str) -> Result<String, super::json_support::JsonError> {
+        Ok(serde_json::to_string_pretty(&super::json_support::parse(
+            text, false,
+        )?)?)
+    }
+
+    /// 格式化 JSON5 文本（解析后输出为标准 JSON 格式）。
+    fn format_json5(text: &str) -> Result<String, super::json_support::JsonError> {
+        Ok(serde_json::to_string_pretty(&Self::parse5(text)?)?)
+    }
+
+    /// 递归排序 JSON 对象中的所有 Key。
     fn sort_keys(value: serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Object(map) => {
-                let sorted: std::collections::BTreeMap<String, serde_json::Value> =
-                    map.into_iter().collect();
-                serde_json::Value::Object(
-                    sorted
-                        .into_iter()
-                        .map(|(k, v)| (k, Self::sort_keys(v)))
-                        .collect(),
-                )
-            }
-            serde_json::Value::Array(items) => {
-                serde_json::Value::Array(items.into_iter().map(Self::sort_keys).collect())
-            }
-            other => other,
-        }
+        super::json_support::sort_keys(value)
     }
 
-    /// 纯函数：压缩 JSON 为单行。
-    fn compress_json(text: &str) -> Result<String, String> {
-        let value = Self::parse5(text)?;
-        serde_json::to_string(&value).map_err(|e| e.to_string())
+    /// 压缩 JSON 文本（移除多余空白）。
+    fn compress_json(text: &str) -> Result<String, super::json_support::JsonError> {
+        Ok(serde_json::to_string(&super::json_support::parse(
+            text, false,
+        )?)?)
     }
 
-    /// 纯函数：将输入文本转义为 JSON 字符串字面量。
-    /// 例如输入 `hello"world` → `"hello\"world"`。
+    /// 转义字符串为 JSON 字符串字面量。
     fn escape_json(text: &str) -> String {
-        serde_json::to_string(text).unwrap_or_else(|_| format!("\"{}\"", text))
+        super::json_support::escape(text)
     }
 
-    /// 纯函数：将 JSON 字符串字面量还原为原始文本。
-    /// 例如输入 `"hello\"world"` → `hello"world`。
-    fn unescape_json(text: &str) -> Result<String, String> {
-        serde_json::from_str::<String>(text).map_err(|e| e.to_string())
+    /// 取消转义 JSON 字符串字面量。
+    ///
+    /// 输入必须是合法的 JSON 字符串字面量（如 `"hello \"world\""`），
+    /// 且必须是一个字符串值（不是对象或数组）。
+    fn unescape_json(text: &str) -> Result<String, super::json_support::JsonError> {
+        match super::json_support::parse(text, false)? {
+            serde_json::Value::String(value) => Ok(value),
+            _ => Err(super::json_support::JsonError::NotString),
+        }
     }
 }
 
@@ -90,8 +117,9 @@ impl Render for JsonFormatterTool {
         let tool = cx.entity();
         let input = self.input_state.clone();
 
+        // —— JSON 格式化按钮 ——
+        // 仅在非 JSON5 模式下显示
         let fmt_json_btn = Button::new("json-format")
-            .primary()
             .label("JSON 格式化")
             .small()
             .on_click({
@@ -111,7 +139,7 @@ impl Render for JsonFormatterTool {
                         Err(e) => {
                             log::warn!(target: "tool.json", "JSON 解析失败: {e}");
                             tool.update(cx, |t, cx| {
-                                t.error = Some(e);
+                                t.error = Some(e.to_string());
                                 cx.notify();
                             });
                         }
@@ -119,6 +147,8 @@ impl Render for JsonFormatterTool {
                 }
             });
 
+        // —— JSON5 格式化按钮 ——
+        // 仅在 JSON5 模式下显示
         let fmt_json5_btn = Button::new("json5-format")
             .label("JSON5 格式化")
             .small()
@@ -127,7 +157,7 @@ impl Render for JsonFormatterTool {
                 let input = input.clone();
                 move |_, _window, cx| {
                     let raw = input.read(cx).value().to_string();
-                    match Self::format_json(&raw) {
+                    match Self::format_json5(&raw) {
                         Ok(out) => {
                             log::info!(target: "tool.json", "JSON5 格式化成功，输出 {} 字符", out.len());
                             tool.update(cx, |t, cx| {
@@ -139,7 +169,7 @@ impl Render for JsonFormatterTool {
                         Err(e) => {
                             log::warn!(target: "tool.json", "JSON5 解析失败: {e}");
                             tool.update(cx, |t, cx| {
-                                t.error = Some(e);
+                                t.error = Some(e.to_string());
                                 cx.notify();
                             });
                         }
@@ -147,6 +177,7 @@ impl Render for JsonFormatterTool {
                 }
             });
 
+        // —— Key 排序按钮 ——
         let sort_btn = Button::new("json-sort")
             .label("排序 key")
             .small()
@@ -170,7 +201,7 @@ impl Render for JsonFormatterTool {
                         Err(e) => {
                             log::warn!(target: "tool.json", "解析失败（排序）: {e}");
                             tool.update(cx, |t, cx| {
-                                t.error = Some(e);
+                                t.error = Some(e.to_string());
                                 cx.notify();
                             });
                         }
@@ -178,6 +209,7 @@ impl Render for JsonFormatterTool {
                 }
             });
 
+        // —— 压缩按钮 ——
         let compress_btn = Button::new("json-compress")
             .label("压缩")
             .small()
@@ -198,7 +230,7 @@ impl Render for JsonFormatterTool {
                         Err(e) => {
                             log::warn!(target: "tool.json", "JSON 压缩失败: {e}");
                             tool.update(cx, |t, cx| {
-                                t.error = Some(e);
+                                t.error = Some(e.to_string());
                                 cx.notify();
                             });
                         }
@@ -206,24 +238,23 @@ impl Render for JsonFormatterTool {
                 }
             });
 
-        let escape_btn = Button::new("json-escape")
-            .label("转义")
-            .small()
-            .on_click({
-                let tool = tool.clone();
-                let input = input.clone();
-                move |_, _window, cx| {
-                    let raw = input.read(cx).value().to_string();
-                    let out = Self::escape_json(&raw);
-                    log::info!(target: "tool.json", "JSON 转义完成，输出 {} 字符", out.len());
-                    tool.update(cx, |t, cx| {
-                        t.output = out;
-                        t.error = None;
-                        cx.notify();
-                    });
-                }
-            });
+        // —— 转义按钮 ——
+        let escape_btn = Button::new("json-escape").label("转义").small().on_click({
+            let tool = tool.clone();
+            let input = input.clone();
+            move |_, _window, cx| {
+                let raw = input.read(cx).value().to_string();
+                let out = Self::escape_json(&raw);
+                log::info!(target: "tool.json", "JSON 转义完成，输出 {} 字符", out.len());
+                tool.update(cx, |t, cx| {
+                    t.output = out;
+                    t.error = None;
+                    cx.notify();
+                });
+            }
+        });
 
+        // —— 取消转义按钮 ——
         let unescape_btn = Button::new("json-unescape")
             .label("取消转义")
             .small()
@@ -244,7 +275,7 @@ impl Render for JsonFormatterTool {
                         Err(e) => {
                             log::warn!(target: "tool.json", "JSON 取消转义失败: {e}");
                             tool.update(cx, |t, cx| {
-                                t.error = Some(e);
+                                t.error = Some(e.to_string());
                                 cx.notify();
                             });
                         }
@@ -252,9 +283,11 @@ impl Render for JsonFormatterTool {
                 }
             });
 
+        // —— 复制结果按钮 ——
         let output_copy = self.output.clone();
         let copy_btn = Button::new("json-copy")
             .label("复制结果")
+            .disabled(self.output.is_empty() || self.error.is_some())
             .small()
             .on_click(move |_, _window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(output_copy.clone()));
@@ -262,11 +295,12 @@ impl Render for JsonFormatterTool {
             });
 
         let theme = cx.theme();
+        // 输出框：显示处理结果或错误信息
         let output_box = div()
             .id("json-output")
             .flex_1()
-            .min_h(px(120.))
-            .rounded(px(8.))
+            .min_h_24()
+            .rounded(theme.radius)
             .border_1()
             .border_color(theme.border)
             .bg(theme.background)
@@ -275,9 +309,7 @@ impl Render for JsonFormatterTool {
             .font_family("JetBrains Mono")
             .text_sm()
             .child(match &self.error {
-                Some(e) => Label::new(e.clone())
-                    .text_color(theme.danger)
-                    .into_any_element(),
+                Some(e) => Alert::error("json-error", e.clone()).into_any_element(),
                 None => self.output.clone().into_any_element(),
             });
 
@@ -288,7 +320,15 @@ impl Render for JsonFormatterTool {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(Label::new("JSON 格式化").text_lg().font_semibold())
+                    .child(
+                        Label::new(if self.json5_mode {
+                            "JSON5 格式化"
+                        } else {
+                            "JSON 格式化"
+                        })
+                        .text_lg()
+                        .font_semibold(),
+                    )
                     .child(
                         Label::new("格式化 / JSON5 格式化 / key 排序 / 自动转义 / 压缩")
                             .text_sm()
@@ -309,15 +349,16 @@ impl Render for JsonFormatterTool {
                         div()
                             .flex_1()
                             .min_h_0()
-                            .child(Textarea::new(&self.input_state).h_full()),
+                            .child(Editor::new(&self.input_state).h_full()),
                     ),
             )
             .child(
                 h_flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(fmt_json_btn)
-                    .child(fmt_json5_btn)
+                    .when(!self.json5_mode, |row| row.child(fmt_json_btn))
+                    .when(self.json5_mode, |row| row.child(fmt_json5_btn))
                     .child(sort_btn)
                     .child(compress_btn)
                     .child(escape_btn)
@@ -327,7 +368,7 @@ impl Render for JsonFormatterTool {
             .child(
                 v_flex()
                     .flex_1()
-                    .min_h(px(120.))
+                    .min_h_24()
                     .gap_1()
                     .child(
                         Label::new("输出")
@@ -343,32 +384,34 @@ impl Render for JsonFormatterTool {
 mod tests {
     use super::JsonFormatterTool;
 
+    /// 测试：JSON 格式化生成带缩进的输出。
     #[test]
     fn format_json_pretty() {
         let out = JsonFormatterTool::format_json(r#"{"a":1,"b":[2,3]}"#).unwrap();
-        assert_eq!(
-            out,
-            "{\n  \"a\": 1,\n  \"b\": [\n    2,\n    3\n  ]\n}"
-        );
+        assert_eq!(out, "{\n  \"a\": 1,\n  \"b\": [\n    2,\n    3\n  ]\n}");
     }
 
+    /// 测试：紧凑输入也能正确格式化。
     #[test]
     fn format_json_compact_input() {
         let out = JsonFormatterTool::format_json(r#"{"x":{"y":true}}"#).unwrap();
         assert!(out.contains("\n  \"x\": {\n    \"y\": true\n  }"));
     }
 
+    /// 测试：无效 JSON 返回错误。
     #[test]
     fn format_json_invalid_returns_error() {
         let err = JsonFormatterTool::format_json(r#"{"a":}"#).unwrap_err();
-        assert!(!err.is_empty());
+        assert!(!err.to_string().is_empty());
     }
 
+    /// 测试：空字符串应该返回错误。
     #[test]
     fn format_json_empty_errors() {
         assert!(JsonFormatterTool::format_json("").is_err());
     }
 
+    /// 测试：Key 排序递归生效。
     #[test]
     fn sort_keys_recursive() {
         let value = serde_json::json!({
@@ -379,6 +422,7 @@ mod tests {
             ]
         });
         let sorted = JsonFormatterTool::sort_keys(value);
+        // 对象 Key 按字母顺序排列
         assert_eq!(
             sorted.as_object().unwrap().keys().collect::<Vec<_>>(),
             vec!["alpha", "zebra"]
@@ -388,6 +432,7 @@ mod tests {
             zebra.as_object().unwrap().keys().collect::<Vec<_>>(),
             vec!["a", "z"]
         );
+        // 数组中的对象也递归排序
         let arr = sorted["alpha"].as_array().unwrap();
         assert_eq!(
             arr[0].as_object().unwrap().keys().collect::<Vec<_>>(),
@@ -399,6 +444,7 @@ mod tests {
         );
     }
 
+    /// 测试：排序结果具有确定性（不同输入顺序产生相同输出）。
     #[test]
     fn sort_keys_is_deterministic() {
         let a = JsonFormatterTool::sort_keys(serde_json::json!({"b":1,"a":2}));
@@ -409,24 +455,27 @@ mod tests {
         );
     }
 
+    /// 测试：压缩移除所有空白。
     #[test]
     fn compress_json_removes_whitespace() {
         let out = JsonFormatterTool::compress_json(r#"{"a": 1, "b": [2, 3]}"#).unwrap();
-        // 压缩后应为单行，不含空格和换行。
         assert_eq!(out, r#"{"a":1,"b":[2,3]}"#);
     }
 
+    /// 测试：压缩无效 JSON 返回错误。
     #[test]
     fn compress_json_invalid_errors() {
         assert!(JsonFormatterTool::compress_json("not json").is_err());
     }
 
+    /// 测试：转义正确处理引号。
     #[test]
     fn escape_json_quotes() {
         let out = JsonFormatterTool::escape_json(r#"hello "world""#);
         assert_eq!(out, r#""hello \"world\"""#);
     }
 
+    /// 测试：取消转义往返一致性。
     #[test]
     fn unescape_json_roundtrip() {
         let original = "hello\nworld\t\"test\"";

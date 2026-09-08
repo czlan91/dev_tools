@@ -33,13 +33,15 @@ dev_tools/
     ├── main.rs                # 程序入口：初始化 GPUI 并创建主窗口
     ├── error.rs               # 应用级错误类型（thiserror 派生）
     ├── app.rs                 # 应用外壳：持有工具状态、设置、菜单路由
-    ├── settings.rs            # 设置持久化：菜单位置、主题选择（JSON 落盘）
+    ├── settings/
+    │   └── mod.rs             # 设置持久化：菜单位置、主题选择（JSON 落盘）
     ├── theme.rs               # 主题管理：浅色/深色/跟随系统（编译期内嵌主题文件）
     └── tools/
         ├── mod.rs             # 工具模块声明和 ToolId 定义
         ├── tsv_to_sql.rs      # TSV 转 SQL IN 工具
         ├── image_to_base64.rs # 图片转 Base64 工具
-        └── json_formatter.rs  # JSON 格式化 / JSON5 格式化 / key 排序 / diff 工具
+        ├── json_formatter.rs  # JSON 格式化 / JSON5 格式化 / key 排序 / diff 工具
+        └── json_compare.rs    # JSON 比较工具
 ```
 
 项目遵循“一个功能一个文件或目录”的原则。简单工具放在 `src/tools/<工具名>.rs`；包含多个紧密关联模块的复杂工具应使用 `src/tools/<工具名>/` 目录，并通过其中的 `mod.rs` 暴露对外类型。
@@ -76,13 +78,17 @@ main()
 
 ## 4. 应用外壳与菜单路由
 
+应用采用侧边栏 + 主内容区 + 底部状态栏的三栏布局。侧边栏仅包含工具菜单，不包含设置入口。设置通过系统菜单栏（macOS 顶部菜单栏）的"Dev Tools → 设置…"或快捷键 `Cmd+,` 打开。
+
 `src/app.rs` 中的 `DevToolsApp` 是所有工具的上层容器，目前保存：
 
 - `active: ToolId`：当前选中的工具。
 - `settings: Entity<Settings>`：应用设置实体（菜单位置、主题选择）。
+- `last_applied_theme: ThemeChoice`：上次实际应用的主题，用于在 `render` 中检测是否需要重新应用。
 - `tsv: Entity<TsvTool>`：TSV 工具的状态实体。
 - `image: Entity<ImageTool>`：图片工具的状态实体。
 - `json: Entity<JsonFormatterTool>`：JSON 格式化工具的状态实体。
+- `json_compare: Entity<JsonCompareTool>`：JSON 比较工具的状态实体。
 
 GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发重新渲染的状态对象。工具切换过程如下：
 
@@ -94,10 +100,12 @@ GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发�
 
 ### 4.1 设置与持久化
 
-设置（`src/settings.rs`）保存在 `~/.config/dev_tools/settings.json`，每次变化立即写盘，避免数据丢失。当前支持两类设置：
+设置（`src/settings/` 目录模块）保存在 `~/.config/dev_tools/settings.json`，每次变化立即写盘，避免数据丢失。当前支持两类设置：
 
 - **菜单位置**（`MenuPosition`）：`Left` 或 `Right`，控制侧边栏在窗口的哪一侧。`render` 中根据该值传入不同的 `Side` 枚举，并调整顶层 `h_flex` 中子元素的排列顺序。
 - **主题选择**（`ThemeChoice`）：`Light`、`Dark` 或 `System`，由 `src/theme.rs` 的 `apply` 函数实际应用。
+
+`ThemeChoice` 和 `MenuPosition` 枚举定义在 `src/settings/mod.rs` 中，与 `Settings` 结构体放在一起，避免循环依赖。
 
 ### 4.2 主题管理
 
@@ -109,14 +117,53 @@ GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发�
 
 ### 4.3 侧边栏菜单
 
-侧边栏包含三个工具分组和一个设置分组：
+侧边栏包含三个工具分组，不包含设置入口（设置通过系统菜单栏打开）：
 
 - **SQL 工具**：TSV → SQL IN
 - **图片工具**：图片 → Base64
-- **数据工具**：JSON 格式化
-- **通用设置**：菜单位置（左/右侧）、主题（白色/黑色/跟随系统）
+- **数据工具**：JSON 格式化、JSON 比较
 
-当前项目没有为工具定义统一 trait，工具通过 `ToolId`、`Entity<T>` 和 `match` 显式注册。这种方式对当前规模足够直观：新增工具时需要在编译期完成所有注册，遗漏分支时 Rust 编译器也会给出提示。
+### 4.4 系统菜单栏
+
+应用在 `main.rs` 中通过 `cx.set_menus(...)` 注册 macOS 系统菜单栏：
+
+- **Dev Tools** 菜单包含"设置…"（`Cmd+,`）和"退出 Dev Tools"（`Cmd+Q`）。
+- 菜单项通过 `MenuItem::action(name, action)` 创建，绑定到对应的 Action 类型。
+- 快捷键通过 `cx.bind_keys(...)` 注册，macOS 会自动在菜单项右侧显示快捷键提示。
+
+### 4.5 全局动作分发
+
+`OpenSettings` 和 `Quit` 动作在 `app.rs` 中通过 `actions!` 宏定义。`Quit` 直接在应用上下文处理：
+
+```rust
+cx.on_action(|_: &Quit, cx| { cx.quit(); });
+```
+
+`OpenSettings` 需要找到 `DevToolsApp` 实体并切换状态。通过 `AppRoot` 全局包装器实现：
+
+```rust
+// app.rs 中定义
+pub struct AppRoot(pub Entity<DevToolsApp>);
+impl Global for AppRoot {}
+
+// main.rs 中设置
+cx.set_global(app::AppRoot(app.clone()));
+
+// 处理动作时查找全局
+cx.on_action(|_: &OpenSettings, cx| {
+    let app = cx.try_global::<AppRoot>().map(|r| r.0.clone());
+    if let Some(app) = app {
+        app.update(cx, |app, cx| {
+            app.active = ToolId::Settings;
+            cx.notify();
+        });
+    }
+});
+```
+
+### 4.6 状态栏
+
+窗口底部使用 `StatusBar` 组件，左侧显示应用版本号（"Dev Tools v0.1.0"），右侧显示当前工具名称。
 
 ## 5. 单个工具的基本结构
 

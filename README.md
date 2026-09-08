@@ -62,9 +62,12 @@ Rust 依赖统一声明在 `Cargo.toml` 中：
 - `gpui`：桌面窗口、渲染和应用运行时。
 - `gpui-component`：侧边栏、输入框、按钮等界面组件。
 - `base64`：图片 Base64 编码。
-- `anyhow`：应用层错误处理。
+- `anyhow`：仅在 `main.rs` 的 `AssetSource` trait 实现中使用（该 trait 由 gpui 定义，签名要求 `anyhow::Result`）。
+- `thiserror`：项目统一的错误类型定义（见 `src/error.rs`），为每个失败场景提供语义化错误枚举。
 - `log`：日志门面接口（业务代码只依赖它）。
 - `env_logger`：日志输出实现（写入 stderr，由 `RUST_LOG` 控制级别）。
+- `serde` + `serde_json`：设置文件 JSON 序列化/反序列化，以及主题文件解析。
+- `json5`：JSON5 格式解析（JSON 超集，支持注释、尾逗号、单引号）。
 
 无需逐个手动安装 Rust 包。进入项目根目录后执行以下命令，Cargo 会根据 `Cargo.toml` 和 `Cargo.lock` 下载并锁定全部依赖：
 
@@ -144,8 +147,30 @@ RUST_LOG=tool.image=debug ./target/debug/dev_tools
 - 记录的是**关键操作、失败位置和耗时任务**（如选中/读取图片、TSV 转换、复制），用于还原「发生了什么」。
 - **不会**记录完整输入内容、图片 Base64、密码等敏感数据。
 - 用 `cargo run` 启动时日志同样打印在运行 `cargo run` 的终端里，排查后按 `Ctrl+C` 结束即可。
+- 日志 target 按功能模块命名：`tool.tsv`、`tool.json`、`tool.image`、`settings`、`theme`、`assets`。
 
 更多日志设计约定见 [架构与工具开发指南](ARCHITECTURE.md) 的「错误处理与日志」一节。
+
+## 项目结构
+
+```
+src/
+├── main.rs                  # 应用入口、资源加载器、窗口初始化
+├── app.rs                   # 应用壳层：侧边栏、工具切换、状态栏
+├── error.rs                 # 统一错误类型（thiserror）
+├── settings/
+│   ├── mod.rs               # 设置状态管理、持久化（JSON 文件）
+│   ├── panel.rs             # 设置面板 UI
+│   └── theme.rs             # 主题加载和应用
+└── tools/
+    ├── mod.rs               # 工具模块声明和 ToolId 枚举
+    ├── tsv_to_sql.rs        # TSV → SQL IN 工具
+    ├── image_to_base64.rs   # 图片 → Base64 工具
+    ├── json_formatter.rs    # JSON/JSON5 格式化工具
+    ├── json_compare.rs      # JSON 比较工具
+    ├── json_diff.rs         # JSON 比较引擎（私有模块）
+    └── json_support.rs      # JSON 公共工具函数（私有模块）
+```
 
 ## 打包
 
