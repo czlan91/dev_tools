@@ -60,6 +60,13 @@ pub struct JsonCompareTool {
     original_right: String,
     /// 需要保持存活的订阅集合。
     _subscriptions: Vec<Subscription>,
+    /// 滚动同步重入标志：防止同步滚动时触发另一次同步，导致死循环。
+    ///
+    /// `set_scroll_offset` 内部使用 `deferred_scroll_offset`，在下一帧 prepaint 时才生效。
+    /// 而 `scroll_offset()` 读取的是当前实际值（deferred 应用前的旧值）。
+    /// 如果直接比较 `scroll_offset()`，deferred 值未生效前会读到旧值，导致来回设置形成死循环。
+    /// 因此用 `syncing_scroll` 标志阻止重入，并在 effect 循环结束后自动重置。
+    syncing_scroll: std::cell::Cell<bool>,
 }
 
 impl JsonCompareTool {
@@ -114,18 +121,31 @@ impl JsonCompareTool {
             original_left: String::new(),
             original_right: String::new(),
             _subscriptions: vec![left_scroll, right_scroll, theme, observe_left, observe_right],
+            syncing_scroll: std::cell::Cell::new(false),
         }
     }
 
     /// 同步两侧编辑器的垂直滚动位置。
     ///
     /// 当用户滚动一侧编辑器时，另一侧跟随滚动，确保对齐的行始终在同一垂直位置。
-    /// 使用比较偏移避免来回同步导致的通知循环。
+    ///
+    /// 注意：`set_scroll_offset` 内部使用 `deferred_scroll_offset`，在下一帧 prepaint 时才生效。
+    /// 而 `scroll_offset()` 读取的是当前实际值（deferred 应用前的旧值）。
+    /// 如果直接比较 `scroll_offset()`，deferred 值未生效前会读到旧值，导致来回设置形成死循环。
+    ///
+    /// 解决方案：用 `syncing_scroll` 标志阻止重入。同步时设置标志，在 effect 循环结束后
+    /// 通过 `cx.defer` 自动重置，这样 deferred 生效后的 observe 回调不会再次触发同步。
     fn sync_scroll(&self, from_left: bool, cx: &mut Context<Self>) {
         // 没有比较结果时不需要同步（未对齐）
         if self.comparison.is_none() {
             return;
         }
+        // 重入检查：如果正在同步滚动，直接返回，避免死循环
+        if self.syncing_scroll.get() {
+            return;
+        }
+        self.syncing_scroll.set(true);
+
         let (source, target) = if from_left {
             (&self.left_input, &self.right_input)
         } else {
@@ -133,10 +153,22 @@ impl JsonCompareTool {
         };
         let y = source.read(cx).scroll_offset().y;
         let mut offset = target.read(cx).scroll_offset();
-        if offset.y != y {
-            offset.y = y;
-            target.update(cx, |editor, cx| editor.set_scroll_offset(offset, cx));
+        // 值相同则无需同步，避免 deferred 生效后的 observe 回调触发无限循环
+        // 但需要重置标志，否则后续用户滚动会被跳过
+        if (offset.y - y).abs() < gpui::px(0.01) {
+            self.syncing_scroll.set(false);
+            return;
         }
+        offset.y = y;
+        target.update(cx, |editor, cx| editor.set_scroll_offset(offset, cx));
+
+        // 在 effect 循环结束后重置标志，允许下一次用户滚动触发同步
+        let weak = cx.weak_entity();
+        cx.defer(move |cx| {
+            if let Some(this) = weak.upgrade() {
+                this.update(cx, |this, _| this.syncing_scroll.set(false));
+            }
+        });
     }
 
     /// 比较两侧 JSON 内容。
