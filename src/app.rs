@@ -107,6 +107,8 @@ pub struct DevToolsApp {
     settings_panel: Entity<crate::settings::SettingsPanel>,
     /// 订阅集合，必须保持存活否则订阅会被自动取消。
     _subscriptions: Vec<Subscription>,
+    /// 当前编辑器的光标位置文本（如"行 3，列 12"），空字符串表示无编辑器。
+    cursor_position: String,
     // —— 以下为各工具实体，每个工具独立管理自己的状态 ——
     tsv: Entity<TsvTool>,
     image: Entity<ImageTool>,
@@ -159,20 +161,46 @@ impl DevToolsApp {
             }
         });
 
+        // —— 创建各工具实体 ——
+        let tsv = cx.new(|cx| TsvTool::new(window, cx));
+        let image = cx.new(|cx| ImageTool::new(window, cx));
+        let json = cx.new(|cx| JsonFormatterTool::new(window, cx));
+        let json5 = cx.new(|cx| JsonFormatterTool::new_json5(window, cx));
+        let json_compare = cx.new(|cx| JsonCompareTool::new(window, cx));
+
+        // —— 观察各工具实体，光标变化时重新渲染以更新状态栏 ——
+        let observe_tsv = cx.observe(&tsv, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+        let observe_image = cx.observe(&image, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+        let observe_json = cx.observe(&json, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+        let observe_json5 = cx.observe(&json5, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+        let observe_compare = cx.observe(&json_compare, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+
         Self {
             settings_panel,
-            _subscriptions: vec![changed, appearance],
+            _subscriptions: vec![
+                changed, appearance,
+                observe_tsv, observe_image, observe_json, observe_json5, observe_compare,
+            ],
             // 默认显示第一个工具：TSV → SQL IN
             active: ToolId::TsvToSql,
             settings,
             last_applied_theme: saved_theme,
-            // 创建各工具实体，每个实体独立管理自己的状态
-            tsv: cx.new(|cx| TsvTool::new(window, cx)),
-            image: cx.new(|cx| ImageTool::new(window, cx)),
-            json: cx.new(|cx| JsonFormatterTool::new(window, cx)),
-            json5: cx.new(|cx| JsonFormatterTool::new_json5(window, cx)),
-            json_compare: cx.new(|cx| JsonCompareTool::new(window, cx)),
+            cursor_position: String::new(),
+            tsv, image, json, json5, json_compare,
         }
+    }
+
+    /// 更新光标位置文本。
+    fn update_cursor(&mut self, cx: &Context<Self>) {
+        self.cursor_position = match self.active {
+            ToolId::TsvToSql => self.tsv.read(cx).cursor_position(cx),
+            ToolId::ImageToBase64 => self.image.read(cx).cursor_position(cx),
+            ToolId::JsonFormatter => self.json.read(cx).cursor_position(cx),
+            ToolId::Json5Formatter => self.json5.read(cx).cursor_position(cx),
+            ToolId::JsonCompare => self.json_compare.read(cx).cursor_position(cx),
+        }
+        .map(|(line, col)| format!("行 {line}，列 {col}"))
+        .unwrap_or_default();
     }
 
     /// 返回当前激活工具的名称，用于在状态栏右侧显示。
@@ -358,10 +386,15 @@ impl Render for DevToolsApp {
                 .child(sidebar),         // 侧边栏在右
         };
 
-        // 构建状态栏
+        // 构建状态栏：左侧显示版本号，右侧显示工具名 + 光标位置
+        let right_text = if self.cursor_position.is_empty() {
+            self.tool_name().to_string()
+        } else {
+            format!("{} | {}", self.tool_name(), self.cursor_position)
+        };
         let status_bar = StatusBar::new()
             .left("Dev Tools v0.1.0")
-            .right(self.tool_name());
+            .right(right_text);
 
         // 组合完整布局
         // `Root::render_dialog_layer` 和 `Root::render_notification_layer` 分别渲染

@@ -37,20 +37,26 @@ pub struct JsonFormatterTool {
     output: String,
     /// 错误信息（`None` 表示无错误）。
     error: Option<String>,
+    /// 订阅集合，保持存活否则自动取消。
+    _subscriptions: Vec<Subscription>,
 }
 
 impl JsonFormatterTool {
     /// 创建 JSON 格式化工具实例（标准 JSON 模式）。
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let input_state = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("json")       // 启用 JSON 语法高亮
+                .placeholder("在此粘贴 JSON / JSON5 文本…")
+        });
+        // 观察编辑器光标变化，通知工具实体重新渲染以更新状态栏
+        let observe = cx.observe(&input_state, |_, _, cx| cx.notify());
         Self {
             json5_mode: false,
-            input_state: cx.new(|cx| {
-                EditorState::new(window, cx)
-                    .language("json")       // 启用 JSON 语法高亮
-                    .placeholder("在此粘贴 JSON / JSON5 文本…")
-            }),
+            input_state,
             output: String::new(),
             error: None,
+            _subscriptions: vec![observe],
         }
     }
 
@@ -109,6 +115,12 @@ impl JsonFormatterTool {
             serde_json::Value::String(value) => Ok(value),
             _ => Err(super::json_support::JsonError::NotString),
         }
+    }
+
+    /// 返回编辑器光标位置（行号、列号，从 1 开始）。
+    pub fn cursor_position(&self, cx: &App) -> Option<(u32, u32)> {
+        let pos = self.input_state.read(cx).cursor_position();
+        Some((pos.line + 1, pos.character + 1))
     }
 }
 

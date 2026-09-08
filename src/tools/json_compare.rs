@@ -98,6 +98,10 @@ impl JsonCompareTool {
         // 主题变化时重新计算装饰颜色
         let theme = cx.observe_global::<gpui_kit::component::Theme>(|tool, cx| tool.decorate(cx));
 
+        // 观察编辑器光标变化，通知工具实体重新渲染以更新状态栏
+        let observe_left = cx.observe(&left_input, |_, _, cx| cx.notify());
+        let observe_right = cx.observe(&right_input, |_, _, cx| cx.notify());
+
         Self {
             left_input,
             right_input,
@@ -109,7 +113,7 @@ impl JsonCompareTool {
             show_raw: false,
             original_left: String::new(),
             original_right: String::new(),
-            _subscriptions: vec![left_scroll, right_scroll, theme],
+            _subscriptions: vec![left_scroll, right_scroll, theme, observe_left, observe_right],
         }
     }
 
@@ -228,6 +232,12 @@ impl JsonCompareTool {
                 .collect();
             collection.set(marks, cx);
         }
+    }
+
+    /// 返回左侧编辑器光标位置（行号、列号，从 1 开始）。
+    pub fn cursor_position(&self, cx: &App) -> Option<(u32, u32)> {
+        let pos = self.left_input.read(cx).cursor_position();
+        Some((pos.line + 1, pos.character + 1))
     }
 }
 

@@ -61,6 +61,8 @@ pub struct TsvTool {
     column_state: Entity<InputState>,
     /// 自定义分隔符输入状态（空字符串表示使用默认 Tab）。
     delimiter_state: Entity<InputState>,
+    /// 订阅集合，保持存活否则自动取消。
+    _subscriptions: Vec<Subscription>,
 }
 
 impl TsvTool {
@@ -82,6 +84,8 @@ impl TsvTool {
             InputState::new(window, cx)
                 .placeholder("分隔符，默认 Tab")
         });
+        // 观察输入区光标变化，通知工具实体重新渲染以更新状态栏
+        let observe = cx.observe(&input_state, |_, _, cx| cx.notify());
         Self {
             input_state,
             output: String::new(),
@@ -91,6 +95,7 @@ impl TsvTool {
             enable_parens: false,
             column_state,
             delimiter_state,
+            _subscriptions: vec![observe],
         }
     }
 
@@ -165,6 +170,12 @@ impl TsvTool {
         let line_count = raw.lines().count();
         log::debug!(target: "tool.tsv", "TSV 转换：解析到 {} 行（列 {}，去重后 {} 个值）", line_count, column_index + 1, values.len());
         result
+    }
+
+    /// 返回编辑器光标位置（行号、列号，从 1 开始）。
+    pub fn cursor_position(&self, cx: &App) -> Option<(u32, u32)> {
+        let pos = self.input_state.read(cx).cursor_position();
+        Some((pos.line + 1, pos.character + 1))
     }
 }
 
