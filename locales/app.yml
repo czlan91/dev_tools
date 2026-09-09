@@ -1,0 +1,121 @@
+_version: 2
+# 应用界面文本的翻译。组件库（gpui-component）的文案由它自带的 locales/ui.yml 提供，
+# 本文件只覆盖应用自身的菜单、设置面板、状态栏文本。
+# 每个 key 下挂各语言；en 是 fallback（见 main.rs 的 i18n! 调用）。
+
+# ===== 系统菜单栏 =====
+menu.app:
+  en: Dev Tools
+  zh-CN: Dev Tools
+menu.settings:
+  en: "Settings…"
+  zh-CN: 设置…
+menu.quit:
+  en: Quit Dev Tools
+  zh-CN: 退出 Dev Tools
+menu.file:
+  en: File
+  zh-CN: 文件
+menu.new:
+  en: New
+  zh-CN: 新建
+menu.cut:
+  en: Cut
+  zh-CN: 剪切
+menu.copy:
+  en: Copy
+  zh-CN: 复制
+menu.paste:
+  en: Paste
+  zh-CN: 粘贴
+menu.select_all:
+  en: Select All
+  zh-CN: 全选
+menu.undo:
+  en: Undo
+  zh-CN: 撤销
+menu.redo:
+  en: Redo
+  zh-CN: 重做
+menu.close_window:
+  en: Close Window
+  zh-CN: 关闭窗口
+
+# ===== 设置面板 =====
+settings.general:
+  en: General
+  zh-CN: 通用
+settings.general_desc:
+  en: Changes take effect immediately and are saved automatically
+  zh-CN: 更改立即生效并自动保存
+settings.appearance:
+  en: Appearance
+  zh-CN: 外观
+settings.menu_position:
+  en: Menu Position
+  zh-CN: 菜单位置
+settings.tool_menu:
+  en: Tool Menu
+  zh-CN: 工具菜单
+settings.menu_position_desc:
+  en: When enabled, the menu moves to the right; when disabled, it returns to the left
+  zh-CN: 开启后移至右侧，关闭后回到左侧
+settings.left:
+  en: Left
+  zh-CN: 左侧
+settings.right:
+  en: Right
+  zh-CN: 右侧
+settings.theme_mode:
+  en: Theme Mode
+  zh-CN: 主题模式
+settings.theme:
+  en: Theme
+  zh-CN: 主题
+settings.theme_desc:
+  en: Follow System automatically responds to system appearance changes
+  zh-CN: 跟随系统会自动响应系统外观变化
+settings.theme_light:
+  en: Light
+  zh-CN: 白色
+settings.theme_dark:
+  en: Dark
+  zh-CN: 黑色
+settings.theme_system:
+  en: Follow System
+  zh-CN: 跟随系统
+settings.language:
+  en: Language
+  zh-CN: 语言
+settings.interface_language:
+  en: Interface Language
+  zh-CN: 界面语言
+settings.language_desc:
+  en: Interface language; takes effect immediately after switching
+  zh-CN: 界面语言；切换后立即生效
+settings.font:
+  en: Font
+  zh-CN: 字体
+settings.code_font:
+  en: Code Font
+  zh-CN: 代码字体
+settings.code_font_desc:
+  en: Used for code input and output; please install this font on your system.
+  zh-CN: 用于代码输入及输出；请在系统中安装此字体。
+
+# ===== 状态栏 / 工具名称 =====
+tool.tsv_to_sql:
+  en: TSV → SQL IN
+  zh-CN: TSV → SQL IN
+tool.image_to_base64:
+  en: Image → Base64
+  zh-CN: 图片 → Base64
+tool.json_formatter:
+  en: JSON Formatter
+  zh-CN: JSON 格式化
+tool.json5_formatter:
+  en: JSON5 Formatter
+  zh-CN: JSON5 格式化
+tool.json_compare:
+  en: JSON Compare
+  zh-CN: JSON 比较

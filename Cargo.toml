@@ -23,6 +23,9 @@ env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }  # 主题/设置文件与 JSON 的序列化
 serde_json = { version = "1", features = ["preserve_order"] }  # 标准 JSON 解析/格式化/排序后的重建
 json5 = "1"  # JSON5（JSON 超集：允许注释、尾逗号、单引号等）解析
+# 应用界面文本的国际化。gpui-component 内部用它做组件文案翻译，
+# 但 gpui-kit 未 re-export，因此这里显式声明，供应用自身的菜单/面板/状态栏文本使用。
+rust-i18n = "4"
 
 [profile.release]
 strip = true

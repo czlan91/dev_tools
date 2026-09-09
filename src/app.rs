@@ -43,6 +43,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::*;
+use rust_i18n::t;
 
 // ===== 宏说明：`actions!` =====
 //
@@ -151,6 +152,9 @@ impl DevToolsApp {
         // 应用保存的主题到当前窗口
         settings::apply(saved_theme, window, cx);
 
+        // 按保存的语言设置全局 locale（影响组件库文案和应用的 t! 文本）
+        gpui_kit::component::set_locale(settings.read(cx).language.locale());
+
         // 创建设置面板（弹窗内容）
         let settings_panel =
             cx.new(|cx| crate::settings::SettingsPanel::new(settings.clone(), window, cx));
@@ -243,14 +247,14 @@ impl DevToolsApp {
         .unwrap_or_default();
     }
 
-    /// 返回当前激活工具的名称，用于在状态栏右侧显示。
-    fn tool_name(&self) -> &'static str {
+    /// 返回当前激活工具的本地化名称，用于在状态栏右侧显示。
+    fn tool_name(&self) -> std::borrow::Cow<'static, str> {
         match self.active {
-            ToolId::TsvToSql => "TSV → SQL IN",
-            ToolId::ImageToBase64 => "图片 → Base64",
-            ToolId::JsonFormatter => "JSON 格式化",
-            ToolId::Json5Formatter => "JSON5 格式化",
-            ToolId::JsonCompare => "JSON 比较",
+            ToolId::TsvToSql => t!("tool.tsv_to_sql"),
+            ToolId::ImageToBase64 => t!("tool.image_to_base64"),
+            ToolId::JsonFormatter => t!("tool.json_formatter"),
+            ToolId::Json5Formatter => t!("tool.json5_formatter"),
+            ToolId::JsonCompare => t!("tool.json_compare"),
         }
     }
 

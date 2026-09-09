@@ -1509,6 +1509,7 @@ dependencies = [
  "gpui-kit",
  "json5",
  "log",
+ "rust-i18n",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

@@ -27,6 +27,11 @@ use gpui_kit::{px, size, AssetSource, Bounds, KeyBinding, Menu, MenuItem, OsActi
 use crate::app::{CloseWindow, Copy, Cut, NewFile, Paste, Redo, SelectAll, Undo};
 use app::{AppRoot, OpenSettings, Quit};
 use error::AppError;
+use rust_i18n::t;
+
+// 初始化应用自身界面文本的翻译（加载 locales/ 目录，fallback 为 en）。
+// 组件库文案由 gpui-component 内部的 i18n! 提供，这里只覆盖应用自身文本。
+rust_i18n::i18n!("locales", fallback = "en");
 
 /// 基于文件系统的资源加载器。
 ///
@@ -107,8 +112,7 @@ fn main() {
     application.run(move |cx| {
         // 初始化 GPUI 组件库（注册主题、样式系统等）
         gpui_kit::init(cx);
-        // 设置组件库的语言环境为中文
-        gpui_kit::component::set_locale("zh-CN");
+        // 语言环境在 DevToolsApp::new 中按保存的设置初始化（默认 zh-CN）。
 
         // ===== 注册全局快捷键 =====
         // `bind_keys` 将动作（Action）与键盘快捷键关联起来。
@@ -122,32 +126,32 @@ fn main() {
         // ===== 设置系统菜单栏 =====
         // 仅在 macOS 上显示为顶部菜单栏，其他平台可能忽略。
         // 菜单项通过 `MenuItem::action` 与 Action 类型关联，
-        // 按下时触发对应的 Action 事件。
+        // 按下时触发对应的 Action 事件。菜单文本通过 `t!` 宏按当前语言取翻译。
         cx.set_menus(vec![
             Menu {
-                name: "Dev Tools".into(),
+                name: t!("menu.app").into(),
                 disabled: false,
                 items: vec![
-                    MenuItem::action("设置…", OpenSettings),
+                    MenuItem::action(t!("menu.settings"), OpenSettings),
                     MenuItem::separator(),
-                    MenuItem::action("退出 Dev Tools", Quit),
+                    MenuItem::action(t!("menu.quit"), Quit),
                 ],
             },
             Menu {
-                name: "文件".into(),
+                name: t!("menu.file").into(),
                 items: vec![
-                    MenuItem::action("新建", NewFile),
+                    MenuItem::action(t!("menu.new"), NewFile),
                     MenuItem::separator(),
-                    MenuItem::os_action("剪切", Cut, OsAction::Cut),
-                    MenuItem::os_action("复制", Copy, OsAction::Copy),
-                    MenuItem::os_action("粘贴", Paste, OsAction::Paste),
+                    MenuItem::os_action(t!("menu.cut"), Cut, OsAction::Cut),
+                    MenuItem::os_action(t!("menu.copy"), Copy, OsAction::Copy),
+                    MenuItem::os_action(t!("menu.paste"), Paste, OsAction::Paste),
                     MenuItem::separator(),
-                    MenuItem::os_action("全选", SelectAll, OsAction::SelectAll),
+                    MenuItem::os_action(t!("menu.select_all"), SelectAll, OsAction::SelectAll),
                     MenuItem::separator(),
-                    MenuItem::os_action("撤销", Undo, OsAction::Undo),
-                    MenuItem::os_action("重做", Redo, OsAction::Redo),
+                    MenuItem::os_action(t!("menu.undo"), Undo, OsAction::Undo),
+                    MenuItem::os_action(t!("menu.redo"), Redo, OsAction::Redo),
                     MenuItem::separator(),
-                    MenuItem::action("关闭窗口", CloseWindow),
+                    MenuItem::action(t!("menu.close_window"), CloseWindow),
                 ],
                 disabled: false,
             },

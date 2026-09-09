@@ -9,10 +9,11 @@
 //!   实际的设置值读写通过 `Settings` 实体完成。
 //! - **可重置**：每个设置项都支持「重置为默认值」，通过 `on_reset` 回调实现。
 //! - **实时保存**：用户修改任何设置后立即通过 `Settings` 实体保存到文件。
-use super::{MenuPosition, Settings, ThemeChoice};
+use super::{Language, MenuPosition, Settings, ThemeChoice};
 use gpui_kit::component::{
     ActiveTheme,
     alert::Alert,
+    group_box::GroupBoxVariant,
     h_flex,
     select::{Select, SelectEvent, SelectState},
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView},
@@ -21,18 +22,38 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use rust_i18n::t;
 
 /// 设置面板实体。
 ///
-/// 持有 `Settings` 实体的引用和一个主题选择下拉框的状态。
+/// 持有 `Settings` 实体的引用和主题、语言选择下拉框的状态。
 /// 通过订阅 `Settings` 实体的变化和下拉框的选择事件，在两者之间同步状态。
 pub struct SettingsPanel {
     /// 设置实体引用，用于读取和写入持久化偏好。
     settings: Entity<Settings>,
     /// 主题选择下拉框的控件状态。
     theme_select: Entity<SelectState<Vec<SharedString>>>,
+    /// 语言选择下拉框的控件状态。
+    language_select: Entity<SelectState<Vec<SharedString>>>,
+    /// 弹窗当前宽度（像素），可由右下角手柄拖拽调整。
+    width: Pixels,
+    /// 弹窗当前高度（像素），可由右下角手柄拖拽调整。
+    height: Pixels,
+    /// 拖拽起始时的鼠标位置与弹窗尺寸，`None` 表示当前未在拖拽。
+    ///
+    /// 用「起始尺寸 + 位移量」而不是「每帧累加」，避免浮点误差累积，
+    /// 也保证拖拽结果只取决于鼠标的绝对位置。
+    drag_origin: Option<DragOrigin>,
     /// 订阅集合，必须保持存活否则订阅会被自动取消。
     _subscriptions: Vec<Subscription>,
+}
+
+/// 拖拽手柄按下瞬间的快照：鼠标位置 + 当时的弹窗尺寸。
+#[derive(Clone, Copy)]
+struct DragOrigin {
+    mouse: Point<Pixels>,
+    width: Pixels,
+    height: Pixels,
 }
 
 impl SettingsPanel {
@@ -58,7 +79,15 @@ impl SettingsPanel {
             select.set_selected_value(&theme_label(settings.read(cx).theme), window, cx)
         });
 
-        // 订阅下拉框的选择事件 → 更新设置实体
+        // 创建语言选择下拉框，提供简体中文和英文两个选项
+        let language_select: Entity<SelectState<Vec<SharedString>>> = cx.new(|cx| {
+            SelectState::new(vec!["简体中文".into(), "English".into()], None, window, cx)
+        });
+        language_select.update(cx, |select, cx| {
+            select.set_selected_value(&language_label(settings.read(cx).language), window, cx)
+        });
+
+        // 订阅主题下拉框的选择事件 → 更新设置实体
         let selected = cx.subscribe_in(&theme_select, window, {
             let settings = settings.clone();
             move |_, _, event, _, cx| {
@@ -74,13 +103,31 @@ impl SettingsPanel {
             }
         });
 
-        // 订阅设置实体的变化 → 同步下拉框的状态
-        // 当外部代码（如重置按钮）修改了主题设置时，下拉框选项需要同步更新。
+        // 订阅语言下拉框的选择事件 → 更新设置实体（set_language 会同时切换全局 locale）
+        let language_selected = cx.subscribe_in(&language_select, window, {
+            let settings = settings.clone();
+            move |_, _, event, _, cx| {
+                if let SelectEvent::Confirm(Some(value)) = event {
+                    let language = match value.as_ref() {
+                        "English" => Language::En,
+                        _ => Language::ZhCN,
+                    };
+                    settings.update(cx, |settings, cx| settings.set_language(language, cx));
+                }
+            }
+        });
+
+        // 订阅设置实体的变化 → 同步两个下拉框的状态
+        // 当外部代码（如重置按钮）修改了设置时，下拉框选项需要同步更新。
         let changed = cx.observe_in(&settings, window, |panel, settings, window, cx| {
-            let label = theme_label(settings.read(cx).theme);
+            let theme = theme_label(settings.read(cx).theme);
+            let language = language_label(settings.read(cx).language);
             // 只更新控件显示，不触发选择事件，避免反馈循环
             panel.theme_select.update(cx, |select, cx| {
-                select.set_selected_value(&label, window, cx)
+                select.set_selected_value(&theme, window, cx)
+            });
+            panel.language_select.update(cx, |select, cx| {
+                select.set_selected_value(&language, window, cx)
             });
             cx.notify();
         });
@@ -88,17 +135,43 @@ impl SettingsPanel {
         Self {
             settings,
             theme_select,
-            _subscriptions: vec![selected, changed],
+            language_select,
+            width: DEFAULT_DIALOG_WIDTH,
+            height: DEFAULT_DIALOG_HEIGHT,
+            drag_origin: None,
+            _subscriptions: vec![selected, language_selected, changed],
         }
     }
 }
 
-/// 将 `ThemeChoice` 枚举值转换为中文显示标签。
+/// 弹窗默认宽度（像素）。
+const DEFAULT_DIALOG_WIDTH: Pixels = px(832.);
+/// 弹窗默认高度（像素）。
+const DEFAULT_DIALOG_HEIGHT: Pixels = px(464.);
+/// 弹窗允许的最小宽度，避免拖得太小导致布局错乱。
+const MIN_DIALOG_WIDTH: Pixels = px(480.);
+/// 弹窗允许的最小高度。
+const MIN_DIALOG_HEIGHT: Pixels = px(360.);
+
+/// 标记一次「调整弹窗大小」的拖拽。作为 `on_drag`/`on_drag_move` 的拖拽负载类型，
+/// 让父容器只响应来自手柄的拖拽，而不理会面板内其它可拖拽元素。
+struct DialogResize;
+
+/// 将 `ThemeChoice` 枚举值转换为显示标签。
 fn theme_label(choice: ThemeChoice) -> SharedString {
     match choice {
         ThemeChoice::Light => "白色",
         ThemeChoice::Dark => "黑色",
         ThemeChoice::System => "跟随系统",
+    }
+    .into()
+}
+
+/// 将 `Language` 枚举值转换为显示标签。
+fn language_label(language: Language) -> SharedString {
+    match language {
+        Language::ZhCN => "简体中文",
+        Language::En => "English",
     }
     .into()
 }
@@ -113,70 +186,85 @@ impl Render for SettingsPanel {
         let select = self.theme_select.clone();
         let dirty_theme = self.settings.clone();
         let reset_theme = self.settings.clone();
+        let language_select = self.language_select.clone();
+        let dirty_language = self.settings.clone();
+        let reset_language = self.settings.clone();
 
         // 使用 GPUI 组件库的 `SettingsView` 构建设置页面布局
+        // `with_group_variant(Outline)` 让每个设置分组渲染为带边框的卡片，
+        // 避免默认 Normal 变体下整个面板像一块无边界白板。
         let panel = SettingsView::new("app-settings")
             .sidebar_width(window.rem_size() * 12.)
+            .with_group_variant(GroupBoxVariant::Outline)
             .page(
                 // —— 通用设置页 ——
-                SettingPage::new("通用")
+                SettingPage::new(t!("settings.general"))
                     .default_open(true)
                     .resettable(true)
-                    .description("更改立即生效并自动保存")
+                    .description(t!("settings.general_desc"))
                     .group(
-                        SettingGroup::new().title("菜单位置").item(
-                            SettingItem::new(
-                                "工具菜单",
-                                SettingField::render(move |_, _, cx| {
-                                    let right =
-                                        read_menu.read(cx).menu_position == MenuPosition::Right;
-                                    let settings = read_menu.clone();
-                                    // Switch 开关组件：左/右切换
-                                    Switch::new("menu-position")
-                                        .checked(right)
-                                        .label(if right { "右侧" } else { "左侧" })
-                                        .on_click(move |checked, _, cx| {
-                                            settings.update(cx, |settings, cx| {
-                                                settings.set_menu_position(
-                                                    if *checked {
-                                                        MenuPosition::Right
-                                                    } else {
-                                                        MenuPosition::Left
-                                                    },
-                                                    cx,
-                                                );
+                        SettingGroup::new()
+                            .title(t!("settings.menu_position"))
+                            .item(
+                                SettingItem::new(
+                                    t!("settings.tool_menu"),
+                                    SettingField::render(move |_, _, cx| {
+                                        let right =
+                                            read_menu.read(cx).menu_position == MenuPosition::Right;
+                                        let settings = read_menu.clone();
+                                        // Switch 开关组件：左/右切换
+                                        Switch::new("menu-position")
+                                            .checked(right)
+                                            .label(if right {
+                                                t!("settings.right").to_string()
+                                            } else {
+                                                t!("settings.left").to_string()
                                             })
+                                            .on_click(move |checked, _, cx| {
+                                                settings.update(cx, |settings, cx| {
+                                                    settings.set_menu_position(
+                                                        if *checked {
+                                                            MenuPosition::Right
+                                                        } else {
+                                                            MenuPosition::Left
+                                                        },
+                                                        cx,
+                                                    );
+                                                })
+                                            })
+                                    }),
+                                )
+                                .description(t!("settings.menu_position_desc").to_string())
+                                .keywords(["菜单", "左侧", "右侧", "sidebar"])
+                                // 重置为默认值（左侧）
+                                .on_reset(
+                                    move |cx| {
+                                        dirty_menu.read(cx).menu_position != MenuPosition::Left
+                                    },
+                                    move |_, cx| {
+                                        reset_menu.update(cx, |settings, cx| {
+                                            settings.set_menu_position(MenuPosition::Left, cx)
                                         })
-                                }),
-                            )
-                            .description("开启后移至右侧，关闭后回到左侧")
-                            .keywords(["菜单", "左侧", "右侧", "sidebar"])
-                            // 重置为默认值（左侧）
-                            .on_reset(
-                                move |cx| dirty_menu.read(cx).menu_position != MenuPosition::Left,
-                                move |_, cx| {
-                                    reset_menu.update(cx, |settings, cx| {
-                                        settings.set_menu_position(MenuPosition::Left, cx)
-                                    })
-                                },
+                                    },
+                                ),
                             ),
-                        ),
                     ),
             )
             .page(
                 // —— 外观设置页 ——
-                SettingPage::new("外观")
+                SettingPage::new(t!("settings.appearance"))
                     .default_open(true)
                     .resettable(true)
                     .group(
-                        SettingGroup::new().title("主题模式").item(
+                        SettingGroup::new().title(t!("settings.theme_mode")).item(
                             SettingItem::new(
-                                "主题",
+                                t!("settings.theme"),
                                 SettingField::render(move |_, _, _| {
-                                    Select::new(&select).accessibility_label("主题模式")
+                                    Select::new(&select)
+                                        .accessibility_label(t!("settings.theme_mode"))
                                 }),
                             )
-                            .description("跟随系统会自动响应系统外观变化")
+                            .description(t!("settings.theme_desc").to_string())
                             .keywords(["主题", "白色", "黑色", "浅色", "深色", "跟随系统"])
                             // 重置为默认值（跟随系统）
                             .on_reset(
@@ -190,9 +278,31 @@ impl Render for SettingsPanel {
                         ),
                     )
                     .group(
-                        SettingGroup::new().title("字体").item(
+                        SettingGroup::new().title(t!("settings.language")).item(
                             SettingItem::new(
-                                "代码字体",
+                                t!("settings.interface_language"),
+                                SettingField::render(move |_, _, _| {
+                                    Select::new(&language_select)
+                                        .accessibility_label(t!("settings.language"))
+                                }),
+                            )
+                            .description(t!("settings.language_desc").to_string())
+                            .keywords(["语言", "中文", "英文", "language"])
+                            // 重置为默认值（简体中文）
+                            .on_reset(
+                                move |cx| dirty_language.read(cx).language != Language::ZhCN,
+                                move |_, cx| {
+                                    reset_language.update(cx, |settings, cx| {
+                                        settings.set_language(Language::ZhCN, cx)
+                                    })
+                                },
+                            ),
+                        ),
+                    )
+                    .group(
+                        SettingGroup::new().title(t!("settings.font")).item(
+                            SettingItem::new(
+                                t!("settings.code_font"),
                                 SettingField::render(|_, _, cx| {
                                     v_flex()
                                         .gap_2()
@@ -205,7 +315,7 @@ impl Render for SettingsPanel {
                                             div()
                                                 .text_sm()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child("用于代码输入及输出；请在系统中安装此字体。"),
+                                                .child(t!("settings.code_font_desc")),
                                         )
                                 }),
                             )
@@ -217,10 +327,74 @@ impl Render for SettingsPanel {
         // 如果存在保存错误，在设置面板顶部显示错误提示
         v_flex()
             .size_full()
+            .relative()
             .gap_2()
+            // 接收来自右下角手柄的拖拽，实时更新弹窗尺寸。
+            // `on_drag_move` 只要拖拽是从手柄发起，就会持续回调——
+            // 即使鼠标已经移出手柄甚至面板区域。
+            .on_drag_move::<DialogResize>(cx.listener(|this, event, _window, cx| {
+                if let Some(origin) = this.drag_origin {
+                    let delta = event.event.position - origin.mouse;
+                    this.width = (origin.width + delta.x).max(MIN_DIALOG_WIDTH);
+                    this.height = (origin.height + delta.y).max(MIN_DIALOG_HEIGHT);
+                    cx.notify();
+                }
+            }))
             .when_some(self.settings.read(cx).save_error.clone(), |view, error| {
                 view.child(Alert::error("settings-save-error", error))
             })
-            .child(div().flex_1().min_h_0().child(panel))
+            .child(div().flex_1().min_h_0().p_2().child(panel))
+            // —— 右下角拖拽手柄 ——
+            .child(
+                div()
+                    .id("settings-resize-handle")
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .w_4()
+                    .h_4()
+                    .cursor_style(CursorStyle::ResizeUpLeftDownRight)
+                    .child(
+                        // 手柄的视觉指示：右下角三条斜线，提示「可拖拽」
+                        div()
+                            .absolute()
+                            .bottom(px(3.))
+                            .right(px(3.))
+                            .w(px(9.))
+                            .h(px(9.))
+                            .border_r_2()
+                            .border_b_2()
+                            .border_color(cx.theme().muted_foreground.opacity(0.6)),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            // 记录拖拽起点：鼠标位置 + 当前弹窗尺寸
+                            this.drag_origin = Some(DragOrigin {
+                                mouse: event.position,
+                                width: this.width,
+                                height: this.height,
+                            });
+                            cx.notify();
+                            // 阻止文本选中等默认行为
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .on_mouse_up(MouseButton::Left, {
+                        let entity = cx.entity().downgrade();
+                        move |_, _, cx| {
+                            entity
+                                .update(cx, |this, cx| {
+                                    this.drag_origin = None;
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    })
+                    // 发起 DialogResize 类型的拖拽；返回值是拖拽时跟随鼠标的占位视图（不可见）。
+                    .on_drag(DialogResize, |_, _, _, cx| {
+                        cx.new(|_| gpui_kit::Empty).into()
+                    }),
+            )
     }
 }

@@ -59,6 +59,28 @@ pub enum MenuPosition {
     Right,
 }
 
+/// 界面语言枚举。
+///
+/// 对应 rust-i18n 的 locale 标识。`ZhCN` 为默认值，与本应用的主要用户群一致。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum Language {
+    /// 简体中文（默认）
+    #[default]
+    ZhCN,
+    /// 英文
+    En,
+}
+
+impl Language {
+    /// 返回对应的 rust-i18n locale 标识字符串。
+    pub fn locale(self) -> &'static str {
+        match self {
+            Language::ZhCN => "zh-CN",
+            Language::En => "en",
+        }
+    }
+}
+
 /// 应用设置结构体。
 ///
 /// 直接对应 JSON 文件的字段。`#[serde(default)]` 属性确保当 JSON 中缺失某个字段时，
@@ -70,6 +92,8 @@ pub struct Settings {
     pub menu_position: MenuPosition,
     /// 主题选择：浅色/深色/跟随系统
     pub theme: ThemeChoice,
+    /// 界面语言：简体中文/英文
+    pub language: Language,
     /// 运行时错误提示（`#[serde(skip)]` 表示不序列化到文件）。
     /// 用于在设置面板中显示保存失败信息，但不会污染持久化文件。
     #[serde(skip)]
@@ -186,6 +210,17 @@ impl Settings {
         self.save();
         cx.notify();
     }
+
+    /// 设置界面语言并保存。
+    ///
+    /// 同时调用 `gpui_kit::component::set_locale` 更新全局 locale，
+    /// 使组件库文案和应用的 `t!` 文本立即切换到新语言。
+    pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.language = language;
+        gpui_kit::component::set_locale(language.locale());
+        self.save();
+        cx.notify();
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +247,7 @@ mod tests {
         let settings = Settings {
             theme: ThemeChoice::Dark,
             menu_position: MenuPosition::Right,
+            language: Language::En,
             save_error: None,
         };
         settings.save_to(&path).unwrap();
@@ -220,6 +256,7 @@ mod tests {
         let restored = Settings::load_from(&path).unwrap();
         assert_eq!(restored.theme, ThemeChoice::Dark);
         assert_eq!(restored.menu_position, MenuPosition::Right);
+        assert_eq!(restored.language, Language::En);
 
         // 写入损坏内容，验证加载失败
         fs::write(&path, "broken").unwrap();
