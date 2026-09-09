@@ -100,12 +100,66 @@ GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发�
 
 ### 4.1 设置与持久化
 
-设置（`src/settings/` 目录模块）保存在 `~/.config/dev_tools/settings.json`，每次变化立即写盘，避免数据丢失。当前支持两类设置：
+设置（`src/settings/` 目录模块）保存在 `~/.config/dev_tools/settings.json`，每次变化立即写盘（「保存即生效」），避免数据丢失。写入用「临时文件 + 原子重命名」策略，避免中途崩溃留下半份 JSON。当前支持两类设置：
 
-- **菜单位置**（`MenuPosition`）：`Left` 或 `Right`，控制侧边栏在窗口的哪一侧。`render` 中根据该值传入不同的 `Side` 枚举，并调整顶层 `h_flex` 中子元素的排列顺序。
-- **主题选择**（`ThemeChoice`）：`Light`、`Dark` 或 `System`，由 `src/theme.rs` 的 `apply` 函数实际应用。
+- **菜单位置**（`MenuPosition`）：`Left` 或 `Right`，控制侧边栏在窗口的哪一侧。
+- **主题选择**（`ThemeChoice`）：`Light`、`Dark` 或 `System`，由 `src/settings/theme.rs` 的 `apply` 函数实际应用。
 
-`ThemeChoice` 和 `MenuPosition` 枚举定义在 `src/settings/mod.rs` 中，与 `Settings` 结构体放在一起，避免循环依赖。
+#### 设置的层次结构
+
+```
+Settings（src/settings/mod.rs）     ← 值类型 + 实体 + 文件 I/O
+   ├─ panel.rs（SettingsPanel）     ← 设置面板的 UI，只持有控件状态
+   └─ theme.rs                      ← 主题的实际应用逻辑
+```
+
+- `Settings` 是纯值类型（`#[derive(Serialize, Deserialize)]`），字段直接对应 JSON 文件。
+- 作为 GPUI Entity 包装后，界面可通过 `cx.observe` 订阅变化自动刷新。
+- `#[serde(default)]` 保证旧版本设置文件缺字段时用默认值填充（向前兼容）。
+- `save_error` 标注 `#[serde(skip)]`：只存在于运行时（用于面板显示保存失败），不写入文件。
+
+#### 如何新增一个设置项
+
+以新增"字号大小"为例，分四步：
+
+第 1 步，在 `Settings` 结构体中加字段：
+
+```rust
+pub struct Settings {
+    pub menu_position: MenuPosition,
+    pub theme: ThemeChoice,
+    pub font_size: u16,              // 新增；#[serde(default)] 会用 0 填充旧文件
+    #[serde(skip)]
+    pub save_error: Option<String>,
+}
+```
+
+如果默认值不是类型的零值，给字段单独指定默认值函数：
+
+```rust
+#[serde(default = "default_font_size")]
+pub font_size: u16,
+
+fn default_font_size() -> u16 { 14 }
+```
+
+第 2 步，加一个"修改即保存"的 setter（沿用现有模式：改值 → `save()` → `cx.notify()`）：
+
+```rust
+pub fn set_font_size(&mut self, size: u16, cx: &mut Context<Self>) {
+    self.font_size = size;
+    self.save();        // 立即落盘，失败会写入 save_error
+    cx.notify();        // 通知订阅者（外壳、面板）刷新
+}
+```
+
+第 3 步，在 `panel.rs` 的设置面板中加对应控件，回调里调用 `set_font_size`。
+
+第 4 步，在使用处读取：`settings.read(cx).font_size`。
+
+#### 打开设置的入口
+
+设置不放在侧边栏，而是通过系统菜单栏"Dev Tools → 设置…"（`Cmd+,`）打开。这条链路是：`OpenSettings` Action → `on_action` 处理器 → `AppRoot` 全局找到 `DevToolsApp` → `app.open_settings(window, cx)` 弹出设置面板（详见 4.5 节）。
 
 ### 4.2 主题管理
 
@@ -123,43 +177,185 @@ GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发�
 - **图片工具**：图片 → Base64
 - **数据工具**：JSON 格式化、JSON 比较
 
-### 4.4 系统菜单栏
+### 4.4 系统菜单栏（macOS）
 
-应用在 `main.rs` 中通过 `cx.set_menus(...)` 注册 macOS 系统菜单栏：
+应用在 `main.rs` 中通过 `cx.set_menus(...)` 注册 macOS 顶部菜单栏。macOS 约定第一个 `Menu` 显示为应用名菜单，其后依次是"文件"、"编辑"、"视图"等。
 
-- **Dev Tools** 菜单包含"设置…"（`Cmd+,`）和"退出 Dev Tools"（`Cmd+Q`）。
-- 菜单项通过 `MenuItem::action(name, action)` 创建，绑定到对应的 Action 类型。
-- 快捷键通过 `cx.bind_keys(...)` 注册，macOS 会自动在菜单项右侧显示快捷键提示。
+#### 菜单三要素
 
-### 4.5 全局动作分发
+GPUI 的系统菜单由三部分配合：
 
-`OpenSettings` 和 `Quit` 动作在 `app.rs` 中通过 `actions!` 宏定义。`Quit` 直接在应用上下文处理：
+| 概念 | 类型 | 作用 |
+|------|------|------|
+| 顶层菜单 | `Menu { name, items }` | 菜单栏上的一个菜单（如"文件"） |
+| 菜单项 | `MenuItem` | 菜单里的条目：动作 / 分隔线 / 子菜单 |
+| 动作 | `Action`（`actions!` 宏定义） | 菜单项点击时分发的事件，用 `cx.on_action` 接收 |
+
+**关键点：菜单项和快捷键是同一套机制的两个触发入口。** 菜单项点击和快捷键按下分发的是同一个 `Action`，都被 `cx.on_action` 接收。因此处理逻辑只写一份，菜单和快捷键自动共享。
+
+#### 当前菜单结构
+
+```rust
+// main.rs
+cx.set_menus(vec![Menu {
+    name: "Dev Tools".into(),       // 应用名菜单
+    items: vec![
+        MenuItem::action("设置…", OpenSettings),
+        MenuItem::separator(),
+        MenuItem::action("退出 Dev Tools", Quit),
+    ],
+}]);
+```
+
+#### 如何新增一个顶层菜单（如"文件"）
+
+分三步：**定义 Action → 注册菜单 → 绑定快捷键和处理器**。
+
+第 1 步，在 `app.rs` 的 `actions!` 宏中追加动作类型：
+
+```rust
+actions!([
+    #[action(no_json)]
+    Quit,
+    #[action(no_json)]
+    OpenSettings,
+    #[action(no_json)]
+    NewFile,   // 新增：文件 → 新建
+]);
+```
+
+第 2 步，在 `main.rs` 的 `set_menus` 的 `vec!` 中追加一个 `Menu`：
+
+```rust
+Menu {
+    name: "文件".into(),
+    items: vec![
+        MenuItem::action("新建", NewFile),
+        MenuItem::separator(),
+        MenuItem::action("关闭窗口", CloseWindow),
+    ],
+},
+```
+
+子菜单用 `MenuItem::submenu(Menu { ... })` 嵌套。
+
+第 3 步，绑定快捷键并注册处理器（见 4.5 节）。
+
+#### `MenuItem::action` 与 `MenuItem::os_action` 的选择
+
+| | `action` | `os_action` |
+|---|---|---|
+| 用途 | 自己的业务动作（新建、打开设置等） | 系统标准编辑动作（剪切/复制/粘贴/全选/撤销/重做） |
+| 快捷键 | 需手动 `bind_keys` | macOS 自动绑定（⌘X/⌘C/⌘V/⌘A/⌘Z） |
+| 可用性 | 永远可点击 | 系统自动判断（无输入焦点时自动置灰） |
+
+"编辑"菜单**应使用 `os_action`**：macOS 自动处理快捷键与焦点判断，GPUI 的编辑器组件内部已响应这些标准编辑操作。
+
+**注意：GPUI 没有预定义 `Cut`、`Copy` 这些 Action 类型。** `OsAction::Cut` 等只是一个标记枚举，告诉 macOS 平台层"这个菜单项直接用系统的 `cut:` selector"。`MenuItem::os_action` 的第二个参数仍需要一个真实的 `Action` 类型作为占位（对 Cut/Copy/Paste/SelectAll 而言，macOS 直接用系统 selector，不会真正分发它）。因此要自己定义一组占位动作：
+
+```rust
+// app.rs 的 actions! 中追加（仅占位，macOS 不会真正分发它们）
+actions!([
+    #[action(no_json)]
+    Quit,
+    #[action(no_json)]
+    OpenSettings,
+    #[action(no_json)]
+    Cut,
+    #[action(no_json)]
+    Copy,
+    #[action(no_json)]
+    Paste,
+    #[action(no_json)]
+    SelectAll,
+    #[action(no_json)]
+    Undo,
+    #[action(no_json)]
+    Redo,
+]);
+```
+
+```rust
+// main.rs 的 set_menus 中
+use gpui_kit::OsAction;
+use app::{Copy, Cut, Paste, Redo, SelectAll, Undo};
+
+Menu {
+    name: "编辑".into(),
+    items: vec![
+        MenuItem::os_action("剪切", Cut, OsAction::Cut),
+        MenuItem::os_action("复制", Copy, OsAction::Copy),
+        MenuItem::os_action("粘贴", Paste, OsAction::Paste),
+        MenuItem::separator(),
+        MenuItem::os_action("全选", SelectAll, OsAction::SelectAll),
+        MenuItem::separator(),
+        MenuItem::os_action("撤销", Undo, OsAction::Undo),
+        MenuItem::os_action("重做", Redo, OsAction::Redo),
+    ],
+},
+```
+
+**undo/redo 的特殊性**：从 GPUI 的 macOS 平台源码可见，`Cut`/`Copy`/`Paste`/`SelectAll` 映射到系统 selector（`cut:`、`copy:` 等），由系统直接作用于原生文本控件；而 `Undo`/`Redo` 映射到 GPUI 自己的 `handleGPUIMenuItem:`，会真正分发对应的 `Undo`/`Redo` Action——如果用了这两个，需要自己写 `cx.on_action` 处理器。
+
+#### 注意事项
+
+- `on_action` 处理器必须在菜单被点击**之前**注册。`set_menus` 和 `on_action` 都放在 `application.run` 回调开头，这个顺序要保证。
+- 菜单项右侧的快捷键提示**不用手动拼在菜单名里**：`set_menus` 内部会把 `bind_keys` 注册的 keymap 传给平台层，绑定后自动显示 `⌘N` 等。
+- `#[action(no_json)]` 表示动作只在本进程内分发，不需要 JSON 序列化。
+
+### 4.5 快捷键与全局动作分发
+
+#### 如何添加快捷键
+
+在 `main.rs` 的 `cx.bind_keys(...)` 中追加 `KeyBinding`：
+
+```rust
+cx.bind_keys([
+    KeyBinding::new("cmd-q", Quit, None),
+    KeyBinding::new("cmd-,", OpenSettings, None),
+    KeyBinding::new("cmd-n", NewFile, None),   // 新增
+]);
+```
+
+`KeyBinding::new` 第三个参数是按键上下文（key context），`None` 表示全局生效。快捷键字符串遵循 GPUI 的按键描述格式（`cmd-`、`ctrl-`、`shift-`、`alt-` 组合）。
+
+#### 动作处理器
+
+动作通过 `cx.on_action` 接收。`Quit` 最简单，直接退出应用：
 
 ```rust
 cx.on_action(|_: &Quit, cx| { cx.quit(); });
 ```
 
-`OpenSettings` 需要找到 `DevToolsApp` 实体并切换状态。通过 `AppRoot` 全局包装器实现：
+`OpenSettings` 需要操作 `DevToolsApp` 实体，通过 `AppRoot` 全局包装器查找，并用 `cx.defer` 延迟到当前事件分发结束后执行（避免在动作分发过程中修改窗口状态）：
 
 ```rust
-// app.rs 中定义
-pub struct AppRoot(pub Entity<DevToolsApp>);
+// app.rs 中定义（第二个字段是窗口句柄，用于在处理器中回到对应窗口）
+pub struct AppRoot(pub Entity<DevToolsApp>, pub AnyWindowHandle);
 impl Global for AppRoot {}
 
-// main.rs 中设置
-cx.set_global(app::AppRoot(app.clone()));
+// main.rs 中创建窗口时设置
+cx.set_global(AppRoot(app.clone(), window.window_handle()));
 
-// 处理动作时查找全局
+// 处理动作时从全局取出，defer 后再更新
 cx.on_action(|_: &OpenSettings, cx| {
-    let app = cx.try_global::<AppRoot>().map(|r| r.0.clone());
-    if let Some(app) = app {
-        app.update(cx, |app, cx| {
-            app.active = ToolId::Settings;
-            cx.notify();
+    if let Some(root) = cx.try_global::<AppRoot>().cloned() {
+        cx.defer(move |cx| {
+            if let Err(error) = cx.update_window(root.1, |_, window, cx| {
+                root.0.update(cx, |app, cx| app.open_settings(window, cx));
+            }) {
+                log::warn!(target: "settings", "打开设置窗口失败: {error}");
+            }
         });
     }
 });
 ```
+
+**`OpenSettings` 为什么比 `Quit` 复杂？** `Quit` 只操作应用本身（`cx.quit()`），而 `OpenSettings` 要跨上下文操作某个具体窗口里的实体。GPUI 的动作分发在应用上下文（`App`）中进行，不能直接拿到 `Window` 和实体，所以需要：全局注册 `AppRoot` 拿到实体和窗口句柄 → `cx.defer` 等分发结束 → `cx.update_window` 进入窗口上下文 → `entity.update` 修改状态。
+
+#### 退出（Quit）的实现
+
+`Quit` 动作触发 `cx.quit()`，由 GPUI 平台层结束事件循环并退出进程。菜单项"退出 Dev Tools"和快捷键 `Cmd+Q` 绑定的是同一个 `Quit` Action，因此两处触发行为一致。
 
 ### 4.6 状态栏
 

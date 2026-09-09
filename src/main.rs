@@ -22,11 +22,9 @@ mod tools;
 use std::borrow::Cow;
 
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AssetSource, Bounds, KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions, WindowBounds,
-    WindowOptions, px, size,
-};
+use gpui_kit::{px, size, AssetSource, Bounds, KeyBinding, Menu, MenuItem, OsAction, SharedString, TitlebarOptions, WindowBounds, WindowOptions};
 
+use crate::app::{CloseWindow, Copy, Cut, NewFile, Paste, Redo, SelectAll, Undo};
 use app::{AppRoot, OpenSettings, Quit};
 use error::AppError;
 
@@ -125,15 +123,35 @@ fn main() {
         // 仅在 macOS 上显示为顶部菜单栏，其他平台可能忽略。
         // 菜单项通过 `MenuItem::action` 与 Action 类型关联，
         // 按下时触发对应的 Action 事件。
-        cx.set_menus(vec![Menu {
-            name: "Dev Tools".into(),
-            disabled: false,
-            items: vec![
-                MenuItem::action("设置…", OpenSettings),
-                MenuItem::separator(),
-                MenuItem::action("退出 Dev Tools", Quit),
-            ],
-        }]);
+        cx.set_menus(vec![
+            Menu {
+                name: "Dev Tools".into(),
+                disabled: false,
+                items: vec![
+                    MenuItem::action("设置…", OpenSettings),
+                    MenuItem::separator(),
+                    MenuItem::action("退出 Dev Tools", Quit),
+                ],
+            },
+            Menu {
+                name: "文件".into(),
+                items: vec![
+                    MenuItem::action("新建", NewFile),
+                    MenuItem::separator(),
+                    MenuItem::os_action("剪切", Cut, OsAction::Cut),
+                    MenuItem::os_action("复制", Copy, OsAction::Copy),
+                    MenuItem::os_action("粘贴", Paste, OsAction::Paste),
+                    MenuItem::separator(),
+                    MenuItem::os_action("全选", SelectAll, OsAction::SelectAll),
+                    MenuItem::separator(),
+                    MenuItem::os_action("撤销", Undo, OsAction::Undo),
+                    MenuItem::os_action("重做", Redo, OsAction::Redo),
+                    MenuItem::separator(),
+                    MenuItem::action("关闭窗口", CloseWindow),
+                ],
+                disabled: false,
+            },
+        ]);
 
         // —— 注册 Action 处理器 ——
 

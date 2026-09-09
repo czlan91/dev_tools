@@ -462,4 +462,51 @@ mod tests {
             assert!(serde_json::from_str::<Value>(&result.text(side)).is_ok());
         }
     }
+
+    /// 测试：数组元素是对象时，按索引对齐后递归按 Key 比较。
+    ///
+    /// 左: [{"name":"a","v":1}, {"x":1}]
+    /// 右: [{"name":"a","v":2}, {"y":2}]
+    /// → [0] 内 v 不同 → Modified；[1] 内 x/y 不同 → Removed + Added
+    #[test]
+    fn array_of_objects_aligns_by_index_then_by_key() {
+        let result = compare(
+            r#"[{"name":"a","v":1},{"x":1}]"#,
+            r#"[{"name":"a","v":2},{"y":2}]"#,
+        );
+
+        // [0] 中 v 的值不同 → Modified 行，且两侧都包含 "v"
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|row| row.kind == ChangeKind::Modified
+                    && row.left.contains("\"v\"")
+                    && row.right.contains("\"v\""))
+        );
+        // [0] 中 name 相同 → Equal 行
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|row| row.kind == ChangeKind::Equal && row.left.contains("name"))
+        );
+        // [1] 中 x 被删除、y 被新增
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|row| row.kind == ChangeKind::Removed && row.left.contains("\"x\""))
+        );
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|row| row.kind == ChangeKind::Added && row.right.contains("\"y\""))
+        );
+        // 两侧文本都必须是合法的 JSON
+        for side in [true, false] {
+            assert!(serde_json::from_str::<Value>(&result.text(side)).is_ok());
+        }
+    }
 }

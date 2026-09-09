@@ -70,7 +70,23 @@ actions!([
     #[action(no_json)]
     Quit,
     #[action(no_json)]
-    OpenSettings
+    OpenSettings,
+    #[action(no_json)]
+    NewFile, // 新增：文件 → 新建
+    #[action(no_json)]
+    CloseWindow,
+    #[action(no_json)]
+    Cut,
+    #[action(no_json)]
+    Copy,
+    #[action(no_json)]
+    Paste,
+    #[action(no_json)]
+    SelectAll,
+    #[action(no_json)]
+    Undo,
+    #[action(no_json)]
+    Redo,
 ]);
 
 /// 全局句柄，持有主应用实体和窗口句柄。
@@ -169,24 +185,48 @@ impl DevToolsApp {
         let json_compare = cx.new(|cx| JsonCompareTool::new(window, cx));
 
         // —— 观察各工具实体，光标变化时重新渲染以更新状态栏 ——
-        let observe_tsv = cx.observe(&tsv, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
-        let observe_image = cx.observe(&image, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
-        let observe_json = cx.observe(&json, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
-        let observe_json5 = cx.observe(&json5, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
-        let observe_compare = cx.observe(&json_compare, |app, _, cx| { app.update_cursor(cx); cx.notify(); });
+        let observe_tsv = cx.observe(&tsv, |app, _, cx| {
+            app.update_cursor(cx);
+            cx.notify();
+        });
+        let observe_image = cx.observe(&image, |app, _, cx| {
+            app.update_cursor(cx);
+            cx.notify();
+        });
+        let observe_json = cx.observe(&json, |app, _, cx| {
+            app.update_cursor(cx);
+            cx.notify();
+        });
+        let observe_json5 = cx.observe(&json5, |app, _, cx| {
+            app.update_cursor(cx);
+            cx.notify();
+        });
+        let observe_compare = cx.observe(&json_compare, |app, _, cx| {
+            app.update_cursor(cx);
+            cx.notify();
+        });
 
         Self {
             settings_panel,
             _subscriptions: vec![
-                changed, appearance,
-                observe_tsv, observe_image, observe_json, observe_json5, observe_compare,
+                changed,
+                appearance,
+                observe_tsv,
+                observe_image,
+                observe_json,
+                observe_json5,
+                observe_compare,
             ],
             // 默认显示第一个工具：TSV → SQL IN
             active: ToolId::TsvToSql,
             settings,
             last_applied_theme: saved_theme,
             cursor_position: String::new(),
-            tsv, image, json, json5, json_compare,
+            tsv,
+            image,
+            json,
+            json5,
+            json_compare,
         }
     }
 
@@ -291,25 +331,21 @@ impl DevToolsApp {
             .header(Label::new("Dev Tools").text_base().font_semibold())
             // —— SQL 工具组 ——
             .child(
-                SidebarGroup::new("SQL 工具").child(
-                    SidebarMenu::new().child(sidebar_item(
-                        "TSV → SQL IN",
-                        ToolId::TsvToSql,
-                        self.active == ToolId::TsvToSql,
-                        &root,
-                    )),
-                ),
+                SidebarGroup::new("SQL 工具").child(SidebarMenu::new().child(sidebar_item(
+                    "TSV → SQL IN",
+                    ToolId::TsvToSql,
+                    self.active == ToolId::TsvToSql,
+                    &root,
+                ))),
             )
             // —— 图片工具组 ——
             .child(
-                SidebarGroup::new("图片工具").child(
-                    SidebarMenu::new().child(sidebar_item(
-                        "图片 → Base64",
-                        ToolId::ImageToBase64,
-                        self.active == ToolId::ImageToBase64,
-                        &root,
-                    )),
-                ),
+                SidebarGroup::new("图片工具").child(SidebarMenu::new().child(sidebar_item(
+                    "图片 → Base64",
+                    ToolId::ImageToBase64,
+                    self.active == ToolId::ImageToBase64,
+                    &root,
+                ))),
             )
             // —— 数据工具组 ——
             .child(
@@ -376,14 +412,14 @@ impl Render for DevToolsApp {
                 .items_stretch()
                 .flex_1()
                 .min_h_0()
-                .child(sidebar)          // 侧边栏在左
-                .child(div().flex_1().min_w_0().child(panel)),  // 内容区在右
+                .child(sidebar) // 侧边栏在左
+                .child(div().flex_1().min_w_0().child(panel)), // 内容区在右
             MenuPosition::Right => h_flex()
                 .items_stretch()
                 .flex_1()
                 .min_h_0()
-                .child(div().flex_1().min_w_0().child(panel))   // 内容区在左
-                .child(sidebar),         // 侧边栏在右
+                .child(div().flex_1().min_w_0().child(panel)) // 内容区在左
+                .child(sidebar), // 侧边栏在右
         };
 
         // 构建状态栏：左侧显示版本号，右侧显示工具名 + 光标位置
@@ -392,9 +428,7 @@ impl Render for DevToolsApp {
         } else {
             format!("{} | {}", self.tool_name(), self.cursor_position)
         };
-        let status_bar = StatusBar::new()
-            .left("Dev Tools v0.1.0")
-            .right(right_text);
+        let status_bar = StatusBar::new().left("Dev Tools v0.1.0").right(right_text);
 
         // 组合完整布局
         // `Root::render_dialog_layer` 和 `Root::render_notification_layer` 分别渲染
