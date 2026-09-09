@@ -318,7 +318,7 @@ impl Render for JsonFormatterTool {
             .bg(theme.background)
             .p_3()
             .overflow_scroll()
-            .font_family("JetBrains Mono")
+            .font_family(cx.theme().mono_font_family.clone())
             .text_sm()
             .child(match &self.error {
                 Some(e) => Alert::error("json-error", e.clone()).into_any_element(),

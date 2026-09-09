@@ -277,7 +277,7 @@ impl Render for TsvTool {
             .bg(theme.background)
             .p_3()
             .overflow_scroll()
-            .font_family("JetBrains Mono")
+            .font_family(cx.theme().mono_font_family.clone())
             .text_sm()
             .child(self.output.clone())
             .when_some(self.error.clone(), |view, error| {

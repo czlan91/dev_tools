@@ -414,7 +414,7 @@ impl Render for JsonCompareTool {
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_scroll()
-                                .font_family("JetBrains Mono")
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_sm()
                                 .child(result.raw_left.clone()),
                         )
@@ -424,7 +424,7 @@ impl Render for JsonCompareTool {
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_scroll()
-                                .font_family("JetBrains Mono")
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_sm()
                                 .child(result.raw_right.clone()),
                         ),

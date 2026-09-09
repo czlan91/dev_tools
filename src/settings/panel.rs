@@ -275,7 +275,7 @@ impl Render for SettingsPanel {
                                         .gap_2()
                                         .child(
                                             h_flex()
-                                                .font_family("JetBrains Mono")
+                                                .font_family(cx.theme().mono_font_family.clone())
                                                 .child("JetBrains Mono"),
                                         )
                                         .child(
