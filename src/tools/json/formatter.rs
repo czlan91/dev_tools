@@ -73,47 +73,47 @@ impl JsonFormatterTool {
     // —— 以下为静态工具方法，不依赖实例状态 ——
 
     /// 解析 JSON5 文本为 `serde_json::Value`。
-    fn parse5(text: &str) -> Result<serde_json::Value, super::json_utils::JsonError> {
-        super::json_utils::parse(text, true)
+    fn parse5(text: &str) -> Result<serde_json::Value, super::utils::JsonError> {
+        super::utils::parse(text, true)
     }
 
     /// 格式化 JSON 文本（带缩进）。
-    fn format_json(text: &str) -> Result<String, super::json_utils::JsonError> {
-        Ok(serde_json::to_string_pretty(&super::json_utils::parse(
+    fn format_json(text: &str) -> Result<String, super::utils::JsonError> {
+        Ok(serde_json::to_string_pretty(&super::utils::parse(
             text, false,
         )?)?)
     }
 
     /// 格式化 JSON5 文本（解析后输出为标准 JSON 格式）。
-    fn format_json5(text: &str) -> Result<String, super::json_utils::JsonError> {
+    fn format_json5(text: &str) -> Result<String, super::utils::JsonError> {
         Ok(serde_json::to_string_pretty(&Self::parse5(text)?)?)
     }
 
     /// 递归排序 JSON 对象中的所有 Key。
     fn sort_keys(value: serde_json::Value) -> serde_json::Value {
-        super::json_utils::sort_keys(value)
+        super::utils::sort_keys(value)
     }
 
     /// 压缩 JSON 文本（移除多余空白）。
-    fn compress_json(text: &str) -> Result<String, super::json_utils::JsonError> {
-        Ok(serde_json::to_string(&super::json_utils::parse(
+    fn compress_json(text: &str) -> Result<String, super::utils::JsonError> {
+        Ok(serde_json::to_string(&super::utils::parse(
             text, false,
         )?)?)
     }
 
     /// 转义字符串为 JSON 字符串字面量。
     fn escape_json(text: &str) -> String {
-        super::json_utils::escape(text)
+        super::utils::escape(text)
     }
 
     /// 取消转义 JSON 字符串字面量。
     ///
     /// 输入必须是合法的 JSON 字符串字面量（如 `"hello \"world\""`），
     /// 且必须是一个字符串值（不是对象或数组）。
-    fn unescape_json(text: &str) -> Result<String, super::json_utils::JsonError> {
-        match super::json_utils::parse(text, false)? {
+    fn unescape_json(text: &str) -> Result<String, super::utils::JsonError> {
+        match super::utils::parse(text, false)? {
             serde_json::Value::String(value) => Ok(value),
-            _ => Err(super::json_utils::JsonError::NotString),
+            _ => Err(super::utils::JsonError::NotString),
         }
     }
 

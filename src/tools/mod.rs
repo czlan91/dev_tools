@@ -21,8 +21,12 @@
 
 // 公开声明各工具模块，使得 `crate::tools::tsv_to_sql` 等路径可被外部访问
 pub mod image_to_base64;
-pub mod json_compare;
-pub mod json_formatter;
+/// JSON 工具子模块：格式化、比较及共享内部实现。
+///
+/// 包括 [`json::compare::JsonCompareTool`]（JSON 比较）和
+/// [`json::formatter::JsonFormatterTool`]（JSON/JSON5 格式化）。
+/// 内部模块 `diff` 和 `utils` 不对外暴露。
+pub mod json;
 pub mod tsv_to_sql;
 
 /// 工具标识符枚举。
@@ -47,10 +51,6 @@ pub enum ToolId {
 // —— 以下为私有模块 ——
 //
 // 这些模块是工具的内部实现，不对外暴露：
-// - `json_diff`：JSON 比较引擎，负责按 Key 对齐和差异标记。
-// - `json_utils`：JSON 解析、排序、转义等公共工具函数。
+// - json 模块的内部模块通过 `json/mod.rs` 管理。
 
-/// JSON 比较引擎：按对象 Key 和数组下标对齐，标记差异。
-mod json_diff;
-/// JSON 公共工具函数：解析（含 JSON5）、Key 排序、转义/取消转义。
-mod json_utils;
+// JSON 模块的内部模块（diff、utils）在 json/ 目录下声明。

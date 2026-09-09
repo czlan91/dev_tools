@@ -16,8 +16,8 @@
 //!
 //! 比较结果直接显示于原输入编辑器中；返回编辑时恢复未对齐的输入。
 use super::{
-    json_diff::{ChangeKind, Comparison},
-    json_utils,
+    diff::{ChangeKind, Comparison},
+    utils,
 };
 use gpui_kit::component::{
     ActiveTheme, Disableable, StyledExt,
@@ -181,8 +181,8 @@ impl JsonCompareTool {
     fn compare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let left = self.left_input.read(cx).value().to_string();
         let right = self.right_input.read(cx).value().to_string();
-        let a = json_utils::parse(&left, false);
-        let b = json_utils::parse(&right, false);
+        let a = utils::parse(&left, false);
+        let b = utils::parse(&right, false);
 
         // 两侧的解析错误分别记录，互不遮盖
         self.left_error = a.as_ref().err().map(ToString::to_string);

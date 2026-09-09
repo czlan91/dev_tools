@@ -31,8 +31,8 @@
 use crate::{
     settings::{self, MenuPosition, Settings as AppSettings, ThemeChoice},
     tools::{
-        ToolId, image_to_base64::ImageTool, json_compare::JsonCompareTool,
-        json_formatter::JsonFormatterTool, tsv_to_sql::TsvTool,
+        ToolId, image_to_base64::ImageTool, json::compare::JsonCompareTool,
+        json::formatter::JsonFormatterTool, tsv_to_sql::TsvTool,
     },
 };
 use gpui_kit::component::{
