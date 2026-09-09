@@ -36,7 +36,7 @@ use crate::{
     },
 };
 use gpui_kit::component::{
-    Root, StyledExt, WindowExt, h_flex,
+    Root, StyledExt, h_flex,
     label::Label,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
     status_bar::StatusBar,
@@ -120,8 +120,6 @@ pub struct DevToolsApp {
     /// 主题变化在事件阶段（`observe_in`）处理，`render` 只负责展示，
     /// 这样即使 `render` 被多次调用也不会重复应用主题。
     last_applied_theme: ThemeChoice,
-    /// 设置面板实体（弹窗内容）。
-    settings_panel: Entity<crate::settings::SettingsPanel>,
     /// 订阅集合，必须保持存活否则订阅会被自动取消。
     _subscriptions: Vec<Subscription>,
     /// 当前编辑器的光标位置文本（如"行 3，列 12"），空字符串表示无编辑器。
@@ -154,10 +152,6 @@ impl DevToolsApp {
 
         // 按保存的语言设置全局 locale（影响组件库文案和应用的 t! 文本）
         gpui_kit::component::set_locale(settings.read(cx).language.locale());
-
-        // 创建设置面板（弹窗内容）
-        let settings_panel =
-            cx.new(|cx| crate::settings::SettingsPanel::new(settings.clone(), window, cx));
 
         // —— 订阅设置变化 ——
         // 使用 `observe_in` 在事件阶段（而非渲染阶段）处理主题变化。
@@ -211,7 +205,6 @@ impl DevToolsApp {
         });
 
         Self {
-            settings_panel,
             _subscriptions: vec![
                 changed,
                 appearance,
@@ -260,31 +253,88 @@ impl DevToolsApp {
 
     /// 打开设置弹窗。
     ///
-    /// 使用 GPUI 的 `open_dialog` 方法在窗口上打开一个模态对话框。
-    /// 对话框的尺寸会根据当前窗口大小和 rem 值动态计算，确保在不同
-    /// 缩放比例下都能合理显示。
-    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 如果已经有一个活动的对话框，不再重复打开
-        if window.has_active_dialog(cx) {
-            return;
+    /// 打开设置窗口（独立原生窗口，不再是主窗口内的模态弹窗）。
+    ///
+    /// ### 为什么用 `cx.open_window` 而不是 `window.open_dialog`
+    ///
+    /// 参考 Zed 的做法（`crates/settings_ui`）：设置是一个**独立的操作系统窗口**。
+    /// 原生窗口的缩放、边框、标题栏、最小化全部由 OS 窗口管理器免费提供
+    /// （`WindowOptions::default` 里 `is_resizable: true`），无需任何自定义拖拽代码。
+    /// 而 `open_dialog` 只是主窗口上的一层覆盖元素，这些能力都要自己实现。
+    ///
+    /// ### 去重
+    ///
+    /// 全局 `SETTINGS_WINDOW` 记录当前设置窗口的句柄。若已打开，则激活并置顶，
+    /// 而不是重复开一个新窗口（与 Zed `downcast::<SettingsWindow>()` 的去重思路一致）。
+    pub fn open_settings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // —— 已打开则激活并置顶，不重复创建 ——
+        // 注意：必须「激活成功」才 return。若句柄已失效（用户关掉了窗口），
+        // update_window 返回 Err，此时要清空失效句柄并继续走下方的新建流程，
+        // 否则会出现「关过一次就再也打不开」的问题。
+        let existing = SETTINGS_WINDOW
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+        if let Some(handle) = existing {
+            let activated = cx
+                .update_window(handle, |_, window, _| {
+                    window.activate_window();
+                })
+                .is_ok();
+            if activated {
+                log::info!(target: "settings", "设置窗口已打开，激活并置顶");
+                return;
+            }
+            // 句柄已失效：清空后继续新建
+            if let Ok(mut guard) = SETTINGS_WINDOW.lock() {
+                *guard = None;
+            }
+            log::info!(target: "settings", "检测到失效的设置窗口句柄，将重新创建");
         }
-        let panel = self.settings_panel.clone();
-        log::info!(target: "settings", "打开设置弹窗");
-        window.open_dialog(cx, move |dialog, window, _| {
-            // 对话框宽度：最多 52 rem，但不能超过窗口宽度减去 4 rem 边距
-            let width =
-                (window.rem_size() * 52.).min(window.bounds().size.width - window.rem_size() * 4.);
-            // 对话框高度：最多 29 rem，但不能超过窗口高度减去 10 rem 边距
-            let height = (window.rem_size() * 29.)
-                .min(window.bounds().size.height - window.rem_size() * 10.);
-            dialog
-                .title("设置")
-                .width(width)
-                .margin_top(window.rem_size() * 2.)
-                .child(div().h(height).min_h_0().child(panel.clone()))
+
+        let settings = self.settings.clone();
+        log::info!(target: "settings", "打开设置窗口");
+
+        let options = WindowOptions {
+            // 初始尺寸 900×600，居中显示
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(900.), px(600.)),
+                cx,
+            ))),
+            // 最小尺寸：侧栏 + 内容区最小宽度，防止拖得太小布局错乱
+            window_min_size: Some(size(px(560.), px(400.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some(t!("settings.window_title").into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = cx.open_window(options, |window, cx| {
+            // 在新窗口内创建设置面板实体，并包裹 Root 以保留下拉框弹层等能力
+            let panel = cx.new(|cx| crate::settings::SettingsPanel::new(settings, window, cx));
+            let root = cx.new(|cx| Root::new(panel, window, cx));
+            // 记录窗口句柄，供「已打开则激活」的去重逻辑使用
+            if let Ok(mut guard) = SETTINGS_WINDOW.lock() {
+                *guard = Some(window.window_handle());
+            }
+            root
         });
+
+        match result {
+            Ok(_) => log::info!(target: "settings", "设置窗口已创建"),
+            Err(error) => log::error!(target: "settings", "创建设置窗口失败: {error:#}"),
+        }
     }
 }
+
+/// 全局跟踪当前打开的设置窗口句柄。
+///
+/// `open_settings` 用它判断设置窗口是否已存在：存在则激活而非重开。
+/// 之所以用 `static Mutex` 而不是 GPUI 全局状态，是因为设置窗口生命周期
+/// 独立于主应用实体，且只需要存一个可选句柄，无需实体机制。
+static SETTINGS_WINDOW: std::sync::Mutex<Option<AnyWindowHandle>> = std::sync::Mutex::new(None);
 
 // ===== 辅助函数：构建侧边栏菜单项 =====
 //

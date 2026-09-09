@@ -35,25 +35,8 @@ pub struct SettingsPanel {
     theme_select: Entity<SelectState<Vec<SharedString>>>,
     /// 语言选择下拉框的控件状态。
     language_select: Entity<SelectState<Vec<SharedString>>>,
-    /// 弹窗当前宽度（像素），可由右下角手柄拖拽调整。
-    width: Pixels,
-    /// 弹窗当前高度（像素），可由右下角手柄拖拽调整。
-    height: Pixels,
-    /// 拖拽起始时的鼠标位置与弹窗尺寸，`None` 表示当前未在拖拽。
-    ///
-    /// 用「起始尺寸 + 位移量」而不是「每帧累加」，避免浮点误差累积，
-    /// 也保证拖拽结果只取决于鼠标的绝对位置。
-    drag_origin: Option<DragOrigin>,
     /// 订阅集合，必须保持存活否则订阅会被自动取消。
     _subscriptions: Vec<Subscription>,
-}
-
-/// 拖拽手柄按下瞬间的快照：鼠标位置 + 当时的弹窗尺寸。
-#[derive(Clone, Copy)]
-struct DragOrigin {
-    mouse: Point<Pixels>,
-    width: Pixels,
-    height: Pixels,
 }
 
 impl SettingsPanel {
@@ -136,26 +119,10 @@ impl SettingsPanel {
             settings,
             theme_select,
             language_select,
-            width: DEFAULT_DIALOG_WIDTH,
-            height: DEFAULT_DIALOG_HEIGHT,
-            drag_origin: None,
             _subscriptions: vec![selected, language_selected, changed],
         }
     }
 }
-
-/// 弹窗默认宽度（像素）。
-const DEFAULT_DIALOG_WIDTH: Pixels = px(832.);
-/// 弹窗默认高度（像素）。
-const DEFAULT_DIALOG_HEIGHT: Pixels = px(464.);
-/// 弹窗允许的最小宽度，避免拖得太小导致布局错乱。
-const MIN_DIALOG_WIDTH: Pixels = px(480.);
-/// 弹窗允许的最小高度。
-const MIN_DIALOG_HEIGHT: Pixels = px(360.);
-
-/// 标记一次「调整弹窗大小」的拖拽。作为 `on_drag`/`on_drag_move` 的拖拽负载类型，
-/// 让父容器只响应来自手柄的拖拽，而不理会面板内其它可拖拽元素。
-struct DialogResize;
 
 /// 将 `ThemeChoice` 枚举值转换为显示标签。
 fn theme_label(choice: ThemeChoice) -> SharedString {
@@ -327,74 +294,10 @@ impl Render for SettingsPanel {
         // 如果存在保存错误，在设置面板顶部显示错误提示
         v_flex()
             .size_full()
-            .relative()
             .gap_2()
-            // 接收来自右下角手柄的拖拽，实时更新弹窗尺寸。
-            // `on_drag_move` 只要拖拽是从手柄发起，就会持续回调——
-            // 即使鼠标已经移出手柄甚至面板区域。
-            .on_drag_move::<DialogResize>(cx.listener(|this, event, _window, cx| {
-                if let Some(origin) = this.drag_origin {
-                    let delta = event.event.position - origin.mouse;
-                    this.width = (origin.width + delta.x).max(MIN_DIALOG_WIDTH);
-                    this.height = (origin.height + delta.y).max(MIN_DIALOG_HEIGHT);
-                    cx.notify();
-                }
-            }))
             .when_some(self.settings.read(cx).save_error.clone(), |view, error| {
                 view.child(Alert::error("settings-save-error", error))
             })
             .child(div().flex_1().min_h_0().p_2().child(panel))
-            // —— 右下角拖拽手柄 ——
-            .child(
-                div()
-                    .id("settings-resize-handle")
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .w_4()
-                    .h_4()
-                    .cursor_style(CursorStyle::ResizeUpLeftDownRight)
-                    .child(
-                        // 手柄的视觉指示：右下角三条斜线，提示「可拖拽」
-                        div()
-                            .absolute()
-                            .bottom(px(3.))
-                            .right(px(3.))
-                            .w(px(9.))
-                            .h(px(9.))
-                            .border_r_2()
-                            .border_b_2()
-                            .border_color(cx.theme().muted_foreground.opacity(0.6)),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            // 记录拖拽起点：鼠标位置 + 当前弹窗尺寸
-                            this.drag_origin = Some(DragOrigin {
-                                mouse: event.position,
-                                width: this.width,
-                                height: this.height,
-                            });
-                            cx.notify();
-                            // 阻止文本选中等默认行为
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .on_mouse_up(MouseButton::Left, {
-                        let entity = cx.entity().downgrade();
-                        move |_, _, cx| {
-                            entity
-                                .update(cx, |this, cx| {
-                                    this.drag_origin = None;
-                                    cx.notify();
-                                })
-                                .ok();
-                        }
-                    })
-                    // 发起 DialogResize 类型的拖拽；返回值是拖拽时跟随鼠标的占位视图（不可见）。
-                    .on_drag(DialogResize, |_, _, _, cx| {
-                        cx.new(|_| gpui_kit::Empty).into()
-                    }),
-            )
     }
 }

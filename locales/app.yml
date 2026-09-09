@@ -45,6 +45,9 @@ menu.close_window:
 settings.general:
   en: General
   zh-CN: 通用
+settings.window_title:
+  en: Settings
+  zh-CN: 设置
 settings.general_desc:
   en: Changes take effect immediately and are saved automatically
   zh-CN: 更改立即生效并自动保存
