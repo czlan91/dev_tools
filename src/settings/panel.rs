@@ -9,7 +9,7 @@
 //!   实际的设置值读写通过 `Settings` 实体完成。
 //! - **可重置**：每个设置项都支持「重置为默认值」，通过 `on_reset` 回调实现。
 //! - **实时保存**：用户修改任何设置后立即通过 `Settings` 实体保存到文件。
-use super::{Language, MenuPosition, Settings, ThemeChoice};
+use super::{Language, Settings, ThemeChoice};
 use gpui_kit::component::{
     ActiveTheme,
     alert::Alert,
@@ -17,7 +17,6 @@ use gpui_kit::component::{
     h_flex,
     select::{Select, SelectEvent, SelectState},
     setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings as SettingsView},
-    switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -147,9 +146,6 @@ impl Render for SettingsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 由于 `render` 中会多次克隆 `self.settings`，这里提前克隆好引用
         // 供闭包捕获。`Entity` 是引用计数的句柄，克隆成本很低（只增加引用计数）。
-        let read_menu = self.settings.clone();
-        let dirty_menu = self.settings.clone();
-        let reset_menu = self.settings.clone();
         let select = self.theme_select.clone();
         let dirty_theme = self.settings.clone();
         let reset_theme = self.settings.clone();
@@ -163,60 +159,6 @@ impl Render for SettingsPanel {
         let panel = SettingsView::new("app-settings")
             .sidebar_width(window.rem_size() * 12.)
             .with_group_variant(GroupBoxVariant::Outline)
-            .page(
-                // —— 通用设置页 ——
-                SettingPage::new(t!("settings.general"))
-                    .default_open(true)
-                    .resettable(true)
-                    .description(t!("settings.general_desc"))
-                    .group(
-                        SettingGroup::new()
-                            .title(t!("settings.menu_position"))
-                            .item(
-                                SettingItem::new(
-                                    t!("settings.tool_menu"),
-                                    SettingField::render(move |_, _, cx| {
-                                        let right =
-                                            read_menu.read(cx).menu_position == MenuPosition::Right;
-                                        let settings = read_menu.clone();
-                                        // Switch 开关组件：左/右切换
-                                        Switch::new("menu-position")
-                                            .checked(right)
-                                            .label(if right {
-                                                t!("settings.right").to_string()
-                                            } else {
-                                                t!("settings.left").to_string()
-                                            })
-                                            .on_click(move |checked, _, cx| {
-                                                settings.update(cx, |settings, cx| {
-                                                    settings.set_menu_position(
-                                                        if *checked {
-                                                            MenuPosition::Right
-                                                        } else {
-                                                            MenuPosition::Left
-                                                        },
-                                                        cx,
-                                                    );
-                                                })
-                                            })
-                                    }),
-                                )
-                                .description(t!("settings.menu_position_desc").to_string())
-                                .keywords(["菜单", "左侧", "右侧", "sidebar"])
-                                // 重置为默认值（左侧）
-                                .on_reset(
-                                    move |cx| {
-                                        dirty_menu.read(cx).menu_position != MenuPosition::Left
-                                    },
-                                    move |_, cx| {
-                                        reset_menu.update(cx, |settings, cx| {
-                                            settings.set_menu_position(MenuPosition::Left, cx)
-                                        })
-                                    },
-                                ),
-                            ),
-                    ),
-            )
             .page(
                 // —— 外观设置页 ——
                 SettingPage::new(t!("settings.appearance"))

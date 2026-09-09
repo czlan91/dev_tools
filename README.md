@@ -166,10 +166,12 @@ src/
     ├── mod.rs               # 工具模块声明和 ToolId 枚举
     ├── tsv_to_sql.rs        # TSV → SQL IN 工具
     ├── image_to_base64.rs   # 图片 → Base64 工具
-    ├── json_formatter.rs    # JSON/JSON5 格式化工具
-    ├── json_compare.rs      # JSON 比较工具
-    ├── json_diff.rs         # JSON 比较引擎（私有模块）
-    └── json_utils.rs         # JSON 公共工具函数（私有模块）
+    └── json/
+        ├── mod.rs           # JSON 工具模块入口
+        ├── compare.rs       # JSON 比较工具
+        ├── formatter.rs     # JSON/JSON5 格式化工具
+        ├── diff.rs          # JSON 比较引擎（私有模块）
+        └── utils.rs         # JSON 公共工具函数（私有模块）
 ```
 
 ## 打包

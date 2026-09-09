@@ -40,8 +40,12 @@ dev_tools/
         ├── mod.rs             # 工具模块声明和 ToolId 定义
         ├── tsv_to_sql.rs      # TSV 转 SQL IN 工具
         ├── image_to_base64.rs # 图片转 Base64 工具
-        ├── json_formatter.rs  # JSON 格式化 / JSON5 格式化 / key 排序 / diff 工具
-        └── json_compare.rs    # JSON 比较工具
+        └── json/
+            ├── mod.rs         # JSON 工具模块入口
+            ├── compare.rs     # JSON 比较工具
+            ├── formatter.rs   # JSON 格式化 / JSON5 格式化 / key 排序
+            ├── diff.rs        # JSON 比较引擎（私有模块）
+            └── utils.rs       # JSON 公共工具函数（私有模块）
 ```
 
 项目遵循“一个功能一个文件或目录”的原则。简单工具放在 `src/tools/<工具名>.rs`；包含多个紧密关联模块的复杂工具应使用 `src/tools/<工具名>/` 目录，并通过其中的 `mod.rs` 暴露对外类型。
@@ -87,8 +91,9 @@ main()
 - `last_applied_theme: ThemeChoice`：上次实际应用的主题，用于在 `render` 中检测是否需要重新应用。
 - `tsv: Entity<TsvTool>`：TSV 工具的状态实体。
 - `image: Entity<ImageTool>`：图片工具的状态实体。
-- `json: Entity<JsonFormatterTool>`：JSON 格式化工具的状态实体。
-- `json_compare: Entity<JsonCompareTool>`：JSON 比较工具的状态实体。
+- `json: Entity<JsonFormatterTool>`：JSON 格式化工具的状态实体，来自 `tools::json::formatter`。
+- `json5: Entity<JsonFormatterTool>`：JSON5 格式化工具的状态实体。
+- `json_compare: Entity<JsonCompareTool>`：JSON 比较工具的状态实体，来自 `tools::json::compare`。
 
 GPUI 的 `Entity<T>` 可以理解为由框架管理的、可更新并能触发重新渲染的状态对象。工具切换过程如下：
 
@@ -432,28 +437,28 @@ gpui-component 的点击处理器可能被调用多次，因此闭包实现的�
 
 ## 6. 如何新增一个工具
 
-以下以“JSON 格式化”工具为例。简单工具应新建独立文件 `src/tools/json_formatter.rs`。
+以下以”文本对比”工具为例。简单工具应新建独立文件 `src/tools/text_diff.rs`；包含多个紧密关联模块的复杂工具（如 JSON 相关功能）则使用目录 `src/tools/<工具名>/`。
 
 ### 第一步：创建工具文件
 
 在新文件中定义状态结构体、构造函数、纯业务函数和 `Render` 实现：
 
 ```rust
-pub struct JsonFormatterTool {
+pub struct TextDiffTool {
     // 保存输入、输出、错误和其他需要跨渲染保留的状态。
 }
 
-impl JsonFormatterTool {
+impl TextDiffTool {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 初始化输入控件和默认状态。
     }
 
-    fn format_json(raw: &str) -> Result<String, JsonFormatterError> {
-        // 只处理 JSON 格式化，不直接操作界面。
+    fn diff_text(a: &str, b: &str) -> Result<String, TextDiffError> {
+        // 只处理文本对比，不直接操作界面。
     }
 }
 
-impl Render for JsonFormatterTool {
+impl Render for TextDiffTool {
     fn render(
         &mut self,
         window: &mut Window,
@@ -464,20 +469,20 @@ impl Render for JsonFormatterTool {
 }
 ```
 
-建议把“解析和转换”写成不依赖 GPUI 的纯函数。这样业务逻辑更容易编写单元测试，也不会和界面事件处理混在一起。
+建议把”解析和转换”写成不依赖 GPUI 的纯函数。这样业务逻辑更容易编写单元测试，也不会和界面事件处理混在一起。
 
 ### 第二步：声明模块和工具 ID
 
 修改 `src/tools/mod.rs`：
 
 ```rust
-pub mod json_formatter;
+pub mod text_diff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ToolId {
     TsvToSql,
     ImageToBase64,
-    JsonFormatter,
+    TextDiff,
 }
 ```
 
@@ -496,7 +501,7 @@ pub enum ToolId {
 ```rust
 use crate::tools::{
     image_to_base64::ImageTool,
-    json_formatter::JsonFormatterTool,
+    text_diff::TextDiffTool,
     tsv_to_sql::TsvTool,
     ToolId,
 };
@@ -509,14 +514,14 @@ pub struct DevToolsApp {
     active: ToolId,
     tsv: Entity<TsvTool>,
     image: Entity<ImageTool>,
-    json_formatter: Entity<JsonFormatterTool>,
+    text_diff: Entity<TextDiffTool>,
 }
 ```
 
 在 `DevToolsApp::new` 中创建该实体：
 
 ```rust
-json_formatter: cx.new(|cx| JsonFormatterTool::new(window, cx)),
+text_diff: cx.new(|cx| TextDiffTool::new(window, cx)),
 ```
 
 实体应只创建一次并保存在 `DevToolsApp` 中。切换菜单时复用同一个实体，用户先前输入的内容才不会因为切换工具而丢失。
@@ -526,23 +531,23 @@ json_formatter: cx.new(|cx| JsonFormatterTool::new(window, cx)),
 在 `DevToolsApp::render` 中为新工具创建用于点击事件的根实体副本：
 
 ```rust
-let select_json_formatter = root.clone();
+let select_text_diff = root.clone();
 ```
 
-将菜单项放入合适的 `SidebarGroup`，例如“JSON 工具”：
+将菜单项放入合适的 `SidebarGroup`，例如”文本工具”：
 
 ```rust
-SidebarMenuItem::new("JSON 格式化")
-    .active(self.active == ToolId::JsonFormatter)
+SidebarMenuItem::new(“文本对比”)
+    .active(self.active == ToolId::TextDiff)
     .on_click(move |_, _, cx| {
-        select_json_formatter.update(cx, |app, cx| {
-            app.active = ToolId::JsonFormatter;
+        select_text_diff.update(cx, |app, cx| {
+            app.active = ToolId::TextDiff;
             cx.notify();
         });
     })
 ```
 
-每个按钮和可交互元素都应使用在整个界面中唯一、含义明确的 ID，例如 `json-format`、`json-copy`，避免不同工具之间发生元素 ID 冲突。
+每个按钮和可交互元素都应使用在整个界面中唯一、含义明确的 ID，如 `text-diff`、`text-diff-compare`，避免不同工具之间发生元素 ID 冲突。
 
 ### 第五步：添加渲染路由
 
@@ -552,7 +557,7 @@ SidebarMenuItem::new("JSON 格式化")
 let panel: AnyElement = match self.active {
     ToolId::TsvToSql => self.tsv.clone().into_any_element(),
     ToolId::ImageToBase64 => self.image.clone().into_any_element(),
-    ToolId::JsonFormatter => self.json_formatter.clone().into_any_element(),
+    ToolId::TextDiff => self.text_diff.clone().into_any_element(),
 };
 ```
 

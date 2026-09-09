@@ -1,7 +1,7 @@
 # JSON 比较工具设计文档
 
 本文记录 JSON 比较工具的设计思路、核心算法和关键决策。文档以当前代码为准：
-比较引擎在 `src/tools/json_diff.rs`，UI 层在 `src/tools/json_compare.rs`，公共工具在 `src/tools/json_utils.rs`。
+比较引擎在 `src/tools/json/diff.rs`，UI 层在 `src/tools/json/compare.rs`，公共工具在 `src/tools/json/utils.rs`。
 
 ## 1. 要解决的问题
 
@@ -32,7 +32,7 @@
 
 ### 为什么先排序 Key？
 
-解析后立即用 `json_utils::sort_keys` 递归排序所有对象的 Key。这样比较结果不受键顺序影响，稳定可预测。注意 `sort_keys` 只排对象、不动数组（数组顺序是有意义的）。
+解析后立即用 `utils::sort_keys` 递归排序所有对象的 Key。这样比较结果不受键顺序影响，稳定可预测。注意 `sort_keys` 只排对象、不动数组（数组顺序是有意义的）。
 
 原始（未排序）的格式化文本也单独保存在 `raw_left` / `raw_right` 中，供"展开原始 JSON"功能使用。
 
@@ -173,11 +173,11 @@ enum AlignTask<'a> {
 
 | 模块 | 职责 | 关键导出 |
 |------|------|----------|
-| `json_diff.rs` | 纯比较引擎，无 UI 依赖 | `Comparison`、`DiffRow`、`ChangeKind` |
-| `json_compare.rs` | UI 层：编辑器、高亮、滚动同步、交互 | `JsonCompareTool` |
-| `json_utils.rs` | 解析（严格 JSON / JSON5）、Key 排序 | `parse`、`sort_keys` |
+| `json/diff.rs` | 纯比较引擎，无 UI 依赖 | `Comparison`、`DiffRow`、`ChangeKind` |
+| `json/compare.rs` | UI 层：编辑器、高亮、滚动同步、交互 | `JsonCompareTool` |
+| `json/utils.rs` | 解析（严格 JSON / JSON5）、Key 排序 | `parse`、`sort_keys` |
 
-比较引擎与 UI 完全分离：`json_diff.rs` 不依赖 GPUI，可独立测试。测试覆盖：缺失 Key 的空行与合法性、键序无关/数组保序、空容器与类型变化、100 层深嵌套不溢出、数组元素为对象的混合嵌套。
+比较引擎与 UI 完全分离：`json/diff.rs` 不依赖 GPUI，可独立测试。测试覆盖：缺失 Key 的空行与合法性、键序无关/数组保序、空容器与类型变化、100 层深嵌套不溢出、数组元素为对象的混合嵌套。
 
 ## 8. 已知的设计取舍
 

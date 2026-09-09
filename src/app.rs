@@ -36,7 +36,8 @@ use crate::{
     },
 };
 use gpui_kit::component::{
-    Root, StyledExt, h_flex,
+    IconName, Root, Sizable, StyledExt, h_flex,
+    button::{Toggle, ToggleVariants},
     label::Label,
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
     status_bar::StatusBar,
@@ -476,13 +477,47 @@ impl Render for DevToolsApp {
                 .child(sidebar), // 侧边栏在右
         };
 
-        // 构建状态栏：左侧显示版本号，右侧显示工具名 + 光标位置
+        // 构建状态栏：左侧显示版本号 + 侧栏位置切换按钮，右侧显示工具名 + 光标位置
         let right_text = if self.cursor_position.is_empty() {
             self.tool_name().to_string()
         } else {
             format!("{} | {}", self.tool_name(), self.cursor_position)
         };
-        let status_bar = StatusBar::new().left("Dev Tools v0.1.0").right(right_text);
+        let settings = self.settings.clone();
+        let status_bar = StatusBar::new()
+            .left(
+                h_flex()
+                    .gap_2()
+                    .child("Dev Tools v0.1.0")
+                    .child(
+                        Toggle::new("menu-position")
+                            .icon(if menu_position == MenuPosition::Left {
+                                IconName::PanelLeftClose
+                            } else {
+                                IconName::PanelRightClose
+                            })
+                            .small()
+                            .ghost()
+                            .tooltip(if menu_position == MenuPosition::Left {
+                                "侧栏在左"
+                            } else {
+                                "侧栏在右"
+                            })
+                            .on_click(move |_, _, cx| {
+                                settings.update(cx, |s, cx| {
+                                    s.set_menu_position(
+                                        if s.menu_position == MenuPosition::Left {
+                                            MenuPosition::Right
+                                        } else {
+                                            MenuPosition::Left
+                                        },
+                                        cx,
+                                    );
+                                });
+                            }),
+                    ),
+            )
+            .right(right_text);
 
         // 组合完整布局
         // `Root::render_dialog_layer` 和 `Root::render_notification_layer` 分别渲染
