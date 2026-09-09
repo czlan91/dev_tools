@@ -307,6 +307,7 @@ impl DevToolsApp {
             window_min_size: Some(size(px(560.), px(400.))),
             titlebar: Some(TitlebarOptions {
                 title: Some(t!("settings.window_title").into()),
+                // appears_transparent: true, // macOS 下需搭配 pt(38.) 避免搜索框与红绿灯重叠
                 ..Default::default()
             }),
             ..Default::default()
